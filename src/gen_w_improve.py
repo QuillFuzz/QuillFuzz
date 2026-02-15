@@ -70,7 +70,11 @@ class ProgramProcessor:
         self.logger.log(msg)
 
     def generate(self, prompt_filename):
-        prompt_path = os.path.join(self.config.prompt_dir, prompt_filename)
+        if os.path.isabs(prompt_filename):
+            prompt_path = prompt_filename
+        else:
+            prompt_path = os.path.join(self.config.prompt_dir, prompt_filename)
+            
         if not os.path.exists(prompt_path):
             self.log(f"Generation prompt not found at {prompt_path}")
             return None
@@ -191,18 +195,17 @@ class ProgramProcessor:
             return None, self.stats, list(set(self.encountered_errors)), True
 
 
-def improve_prompt_logic(improver_model, prompt_dir, common_prompt_dir, original_filename, error_logs, language, logger=None):
+def improve_prompt_logic(improver_model, prompt_path, common_prompt_dir, output_path, error_logs, language, logger=None):
     """
     Analyzes errors and rewrites the prompt to improve generation.
     """
-    original_path = os.path.join(prompt_dir, original_filename)
-    if not os.path.exists(original_path):
+    if not os.path.exists(prompt_path):
         if logger:
-            logger.log(f"Original prompt file not found at {original_path}. Skipping improvement.")
-        print(f"Original prompt file not found at {original_path}. Skipping improvement.")
+            logger.log(f"Original prompt file not found at {prompt_path}. Skipping improvement.")
+        print(f"Original prompt file not found at {prompt_path}. Skipping improvement.")
         sys.exit(1)
 
-    with open(original_path, 'r') as f:
+    with open(prompt_path, 'r') as f:
         original_content = f.read()
 
     unique_errors = list(set(error_logs))[:10]  # Limit errors
@@ -218,27 +221,32 @@ def improve_prompt_logic(improver_model, prompt_dir, common_prompt_dir, original
     improved_content, _, err = ask_any_model(improver_model, meta_prompt)
     
     if improved_content:
-        with open(original_path, 'w') as f:
+        with open(output_path, 'w') as f:
             f.write(improved_content)
         
         if logger:
             logger.log(f"\n--- Improved Prompt Content ({time.ctime()}) ---\n{improved_content}\n-----------------------------------------------\n")
 
-        print(f"[Training] Improved prompt OVERWROTE {original_filename}")
-        return original_filename
+        print(f"[Training] Improved prompt saved to {output_path}")
+        return output_path
     else:
         print(f"[Training] Failed to improve prompt: {err}")
-        return original_filename
+        return prompt_path
 
-def run_training_phase(model, args, common_run_dir, logfile_path):
-    logger = Logger(logfile_path)
+def run_training_phase(model, args, common_run_dir, main_logfile_path):
+    # Main logger for high-level info if needed, but we'll use per-round logs
+    # logger = Logger(main_logfile_path) 
+    
     prompt_filename = "generation_prompt.txt"
     script_dir = os.path.dirname(os.path.abspath(__file__))
     
     if args.training_n <= 0:
         return prompt_filename
 
-    max_rounds = 3 # Hardcoded max rounds to prevent infinite loops, can be made configurable
+    max_rounds = 3 
+
+    best_prompt = prompt_filename
+    best_fix_ratio = 1.0
 
     for round_idx in range(max_rounds + 1):
         # Setup directories
@@ -248,6 +256,9 @@ def run_training_phase(model, args, common_run_dir, logfile_path):
         os.makedirs(t_gen_dir, exist_ok=True)
         os.makedirs(t_fail_dir, exist_ok=True)
 
+        # Per-round logger
+        round_logfile = os.path.join(round_dir, f"round_{round_idx}_execution.log")
+        logger = Logger(round_logfile)
         logger.log(f"\n[Training Round {round_idx}] Model: {model} | Prompt: {prompt_filename}")
 
         training_errors = []
@@ -273,25 +284,45 @@ def run_training_phase(model, args, common_run_dir, logfile_path):
         fix_ratio = count_needed_fix / args.training_n
         logger.log(f"Round {round_idx} Result: {count_needed_fix}/{args.training_n} fixes (Ratio: {fix_ratio:.2f})")
 
+        # Update best prompt if this round is strictly better
+        if fix_ratio < best_fix_ratio:
+            best_fix_ratio = fix_ratio
+            best_prompt = prompt_filename
+
         if fix_ratio < args.training_threshold:
-            logger.log(f"Training success! Proceeding.")
+            logger.log(f"Training success! Proceeding with {prompt_filename}")
             return prompt_filename
 
         if args.improve_prompt and round_idx < max_rounds:
             logger.log("Threshold not met. Improving prompt...")
+            
+            # Resolve current prompt path for reading
+            current_prompt_path = prompt_filename
+            if not os.path.isabs(current_prompt_path):
+                current_prompt_path = os.path.join(args.prompt_dir, current_prompt_path)
+            
+            # Define new prompt path
+            new_prompt_path = os.path.join(round_dir, "improved_prompt.txt")
+
             try:
-                new_prompt = improve_prompt_logic(
-                    args.improver_model, args.prompt_dir,
+                # Returns absolute path to the new prompt
+                prompt_filename = improve_prompt_logic(
+                    args.improver_model, 
+                    current_prompt_path,
                     os.path.join(script_dir, "Common_prompt_templates"),
-                    prompt_filename, training_errors, args.language, logger
+                    new_prompt_path, 
+                    training_errors, 
+                    args.language, 
+                    logger
                 )
-                prompt_filename = new_prompt
             except Exception as e:
                 logger.log(f"Error improving prompt: {e}")
+                import traceback
+                logger.log(traceback.format_exc())
         else:
-            logger.log("Max rounds reached.")
+            logger.log("Max rounds reached or improvement disabled.")
             
-    return prompt_filename
+    return best_prompt
 
 def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_path):
     logger = Logger(logfile_path)
