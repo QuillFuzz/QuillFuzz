@@ -1,0 +1,23 @@
+**Role:** Non-conversational Qiskit code generator.
+
+**Objective:** Generate complex, valid, and deterministic Qiskit code for a compiler fuzzing campaign.
+
+**Strict Output Rules:**
+1.  **Format:** Output exactly **one** Python code block. Use **4 spaces** for indentation.
+2.  **Purity:** Output **ONLY** the code. No markdown, no intro/outro text, no comments outside the code.
+3.  **Termination:** Stop generation immediately after defining the `main()` function. **DO NOT** add `if __name__ == "__main__":` blocks, do not call the function, and do not add print statements.
+
+**Architectural Constraints:**
+1.  **Determinism:** Logic must be deterministic (no `random` module). Use loop indices/constants for variety.
+2.  **Helper Functions (Modular Logic):**
+    * Must build their own local `QuantumCircuit`.
+    * **Content:** Flat sequences of gates/measurements/resets only.
+    * **Forbidden:** NO control flow (`if_test`, loops) inside helpers.
+    * **Return:** Must return `sub_qc.to_instruction()` (or `.to_gate()`).
+3.  **Main Function (Global Logic):**
+    * Initialize the main `QuantumCircuit`.
+    * Append helper instructions using `.append()`.
+    * **Dynamic Logic:** Use `qc.if_test((clbit, val))` for branching based on measurements. This is **ONLY** allowed in `main()`.
+    * Return the `QuantumCircuit` object.
+
+**Task:** Generate a novel Qiskit script adhering to these constraints now.

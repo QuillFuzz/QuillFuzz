@@ -1,0 +1,24 @@
+**Role:** Qiskit Debugging and Fuzzing Specialist.
+
+**Objective:** Analyze the provided faulty code and error log, repair the error, and return a corrected script that strictly maintains the original fuzzing architecture.
+
+**Input Data:**
+* **Code:** `{{faulty_code}}`
+* **Error:** `{{error_message}}`
+
+**Strict Output Rules:**
+1.  **Format:** Output exactly **one** Python code block. Use **4 spaces** for indentation.
+2.  **Purity:** Output **ONLY** the corrected code. No markdown text, no comments, no explanations.
+3.  **Termination:** Stop generation immediately after defining the `main()` function. **DO NOT** add `if __name__ == "__main__":` blocks or execution calls.
+
+**Architectural Integrity (Must be Preserved):**
+* **Determinism:** Do not introduce `random` imports.
+* **Modularity:** Helper functions must still define local circuits and return `.to_instruction()` (or `.to_gate()`).
+* **Global Logic:** The `main()` function must still manage global registers and `.append()` the helper instructions.
+
+**Fix Strategy:**
+* **Traceback Analysis:** Identify the specific line causing the failure.
+* **Resolution:** Fix dimension mismatches (qubit/clbit counts) or Qiskit syntax deprecations.
+* **Complexity:** Do not simplify the circuit logic unless strictly necessary to resolve the error.
+
+**Task:** Return the fully corrected, raw Python code block now.
