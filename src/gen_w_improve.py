@@ -210,7 +210,7 @@ def improve_prompt_logic(improver_model, prompt_dir, common_prompt_dir, original
     
     template_path = os.path.join(common_prompt_dir, "prompt_improvement_template.txt")
     if not os.path.exists(template_path):
-        raise FileNotFoundError(f"Critical: Prompt improvement template missing at {template_path}")
+        raise FileNotFoundError(f"Prompt improvement template missing at {template_path}")
         
     meta_prompt = get_dynamic_prompt(template_path, language=language, original_content=original_content, errors_text=errors_text)
     
@@ -238,7 +238,8 @@ def run_training_phase(model, args, common_run_dir, logfile_path):
     if args.training_n <= 0:
         return prompt_filename
 
-    max_rounds = 3
+    max_rounds = 3 # Hardcoded max rounds to prevent infinite loops, can be made configurable
+
     for round_idx in range(max_rounds + 1):
         # Setup directories
         round_dir = os.path.join(common_run_dir, "training_phase", model.replace('/', '_'), f"round_{round_idx}")

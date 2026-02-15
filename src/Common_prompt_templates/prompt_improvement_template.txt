@@ -1,5 +1,5 @@
 You are an expert prompt engineer optimizing prompts for an LLM that generates {{ language }} code for fuzz testing.
-The current prompt is producing code that fails to compile or run too often.
+The current prompt is producing code that fails to compile too often.
 
 Here is the Original Prompt:
 '''

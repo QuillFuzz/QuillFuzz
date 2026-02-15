@@ -63,7 +63,7 @@ import pyqir
 
 class Base():
     # Define the plots directory as a class variable
-    OUTPUT_DIR = (pathlib.Path(__file__).parent.parent / "outputs").resolve()
+    OUTPUT_DIR = (pathlib.Path(__file__).parent.parent.parent / "local_saved_circuits").resolve()
     # Define timeout seconds for any compilation
     TIMEOUT_SECONDS = 200
 
