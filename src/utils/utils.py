@@ -162,6 +162,8 @@ def generate_summary_plot(stats_summary, output_dir):
     if not stats_summary:
         return
 
+    os.makedirs(output_dir, exist_ok=True)
+
     models = [s['model'] for s in stats_summary]
     short_models = [m.split('/')[-1] for m in models]
     
@@ -296,6 +298,8 @@ def generate_complexity_scatter_plots(all_metrics, output_dir):
     """
     if not all_metrics:
         return
+
+    os.makedirs(output_dir, exist_ok=True)
 
     # Metrics to plot
     plot_configs = [
