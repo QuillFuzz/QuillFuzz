@@ -26,7 +26,7 @@ def get_dynamic_prompt(template_path, **kwargs) -> str:
     template = Template(template_str)
     return template.render(**kwargs)
 
-def ask_any_model(model_name, prompt):
+def ask_any_model(model_name, prompt, reasoning_effort="high"):
     # tqdm.write(f"Sending to {model_name}...") # Too noisy for concurrent execution
     
     max_retries = 10
@@ -39,7 +39,7 @@ def ask_any_model(model_name, prompt):
             response = completion(
                 model=model_name, 
                 messages=[{ "content": prompt, "role": "user" }],
-                reasoning_effort="high",
+                reasoning_effort=reasoning_effort,
                 drop_params=True
             )
             

@@ -1,16 +1,14 @@
 language: guppy
 models:
-  # - deepseek/deepseek-chat
-  # - deepseek/deepseek-reasoner
-  # - anthropic/claude-sonnet-4-5
-  - openai/gpt-5-mini
-  # - gemini/gemini-3-pro-preview 
-  # - gemini/gemini-3-flash-preview # Too terrible at code generation, not worth it
+  # - anthropic/claude-sonnet-4-5 # Rate limited 
+  - openai/gpt-5-mini # Rate limit high enough for application
+  # - gemini/gemini-3-pro-preview # Expensive and rate limited
 n_programs: 20
 n_fixing_cycles: 2
 max_workers: 10
-n_assemble: 10
-n_circuits_per_assembly: 10
-verbose: false
-improve_prompt: true
+n_assemble: 1
+n_circuits_per_assembly: 1
+verbose: true
+improve_prompt: false
 improver_model: gemini/gemini-3-pro-preview
+reasoning_effort: high

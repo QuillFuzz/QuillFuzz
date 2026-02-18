@@ -25,6 +25,7 @@ class GenerationStats:
     completion_tokens: int = 0
     total_tokens: int = 0
     quality_score: Optional[float] = None
+    execution_quality_score: Optional[float] = None
     metrics: Dict[str, Any] = field(default_factory=lambda: {'compilation': {}, 'execution': {}})
 
     def update(self, stats: Dict[str, Any]):
@@ -80,7 +81,8 @@ class ProgramProcessor:
             return None
 
         prompt = get_dynamic_prompt(prompt_path)
-        code, stats, err = ask_any_model(self.model, prompt)
+        # Pass reasoning_effort from config
+        code, stats, err = ask_any_model(self.model, prompt, reasoning_effort=self.config.reasoning_effort)
         
         if code is None:
             self.log(f"Failed to generate {self.filename}. Error: {err}\n")
@@ -96,20 +98,25 @@ class ProgramProcessor:
         error, _, metrics, wrapped_code = compile_generated_program(code, language=self.config.language)
         self.stats.metrics['compilation'] = metrics
         
+        # Store compiliation quality score as the main quality_score
         if error:
-            self.stats.quality_score = metrics.get('quality_score', 0.0)
+            self.stats.quality_score = 0.0
             self.log(f"{self.filename} Compilation Failed:\n{error}\n")
             self.encountered_errors.append(f"Compilation Error:\n{error}")
             if self.config.verbose:
                 self.log(f"--- {self.filename} Code ---\n{wrapped_code}\n-----------------------\n")
             return False, error
+        
+        self.stats.quality_score = metrics.get('quality_score', 0.0)
         return True, ""
 
     def run_check(self, code):
         self.log(f"--- {self.elapsed} Running {self.filename} ---\n")
         error, _, metrics, runtime_code = run_generated_program(code, language=self.config.language)
         self.stats.metrics['execution'] = metrics
-        self.stats.quality_score = metrics.get('quality_score', 0.0)
+        
+        # Store execution quality score separately
+        self.stats.execution_quality_score = metrics.get('quality_score', 0.0)
         self.log(f"{self.filename} Metrics: {self.stats.metrics}\n")
 
         if error.strip():
@@ -133,7 +140,7 @@ class ProgramProcessor:
                 return None
 
             prompt = get_dynamic_prompt(prompt_path, faulty_code=current_code, error_message=current_error)
-            fixed_code, stats, err = ask_any_model(self.model, prompt)
+            fixed_code, stats, err = ask_any_model(self.model, prompt, reasoning_effort=self.config.reasoning_effort)
 
             if not fixed_code:
                 self.log(f"Fixing cycle {cycle+1} failed for {self.filename}: {err}\n")
@@ -195,7 +202,7 @@ class ProgramProcessor:
             return None, self.stats, list(set(self.encountered_errors)), True
 
 
-def improve_prompt_logic(improver_model, prompt_path, common_prompt_dir, output_path, error_logs, language, logger=None):
+def improve_prompt_logic(improver_model, prompt_path, common_prompt_dir, output_path, error_logs, language, logger=None, reasoning_effort="high"):
     """
     Analyzes errors and rewrites the prompt to improve generation.
     """
@@ -218,7 +225,7 @@ def improve_prompt_logic(improver_model, prompt_path, common_prompt_dir, output_
     meta_prompt = get_dynamic_prompt(template_path, language=language, original_content=original_content, errors_text=errors_text)
     
     print(f"\n[Training] requesting prompt improvement from {improver_model}...")
-    improved_content, _, err = ask_any_model(improver_model, meta_prompt)
+    improved_content, _, err = ask_any_model(improver_model, meta_prompt, reasoning_effort=reasoning_effort)
     
     if improved_content:
         with open(output_path, 'w') as f:
@@ -260,6 +267,7 @@ def run_training_phase(model, args, common_run_dir, main_logfile_path):
         round_logfile = os.path.join(round_dir, f"round_{round_idx}_execution.log")
         logger = Logger(round_logfile)
         logger.log(f"\n[Training Round {round_idx}] Model: {model} | Prompt: {prompt_filename}")
+        logger.log(f"Reasoning Effort: {args.reasoning_effort}")
 
         training_errors = []
         count_needed_fix = 0
@@ -313,7 +321,8 @@ def run_training_phase(model, args, common_run_dir, main_logfile_path):
                     new_prompt_path, 
                     training_errors, 
                     args.language, 
-                    logger
+                    logger,
+                    reasoning_effort=args.reasoning_effort
                 )
             except Exception as e:
                 logger.log(f"Error improving prompt: {e}")
@@ -335,6 +344,20 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
 
     logger.log(f"\n{'='*60}\n PRODUCTION PHASE: {args.n_programs} programs\n{'='*60}")
     logger.log(f"Prompt: {prompt_filename}")
+    logger.log(f"Reasoning Effort: {args.reasoning_effort}")
+
+    if args.verbose:
+        if os.path.isabs(prompt_filename):
+            prompt_path = prompt_filename
+        else:
+            prompt_path = os.path.join(args.prompt_dir, prompt_filename)
+        
+        try:
+            with open(prompt_path, 'r') as f:
+                prompt_content = f.read()
+            logger.log(f"\n--- Prompt Content ---\n{prompt_content}\n----------------------\n")
+        except Exception as e:
+            logger.log(f"Could not read prompt file for verbose logging: {e}")
 
     successful_files = []
     stats_list = []
@@ -363,13 +386,39 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
     quality_scores = [s.quality_score for s in stats_list if s.quality_score is not None]
     avg_quality = sum(quality_scores)/len(quality_scores) if quality_scores else 0
     
+    total_prompt_tokens = sum(s.prompt_tokens for s in stats_list)
+    total_completion_tokens = sum(s.completion_tokens for s in stats_list)
+    total_tokens = sum(s.total_tokens for s in stats_list)
+    avg_time_per_valid = total_time / len(successful_files) if successful_files else 0
+
+    summary_log = f"""
+============================================================
+  PERFORMANCE SUMMARY for {model}
+------------------------------------------------------------
+  Target Number of Programs : {args.n_programs}
+  Total Valid Programs     : {len(successful_files)}
+  Total Time Taken         : {total_time:.2f} seconds
+  Avg Time per Valid Prog  : {avg_time_per_valid:.2f} seconds
+  Avg Quality Score        : {avg_quality:.4f}
+------------------------------------------------------------
+  Total Cost (Estimated)   : ${total_cost:.6f}
+  Total Prompt Tokens      : {total_prompt_tokens}
+  Total Completion Tokens  : {total_completion_tokens}
+  Total Tokens             : {total_tokens}
+============================================================
+"""
+    logger.log(summary_log)
+
     summary = {
         "model": model,
         "total_cost": total_cost,
         "total_time": total_time,
         "total_programs": args.n_programs,
         "valid_programs": len(successful_files),
-        "avg_quality_score": avg_quality
+        "avg_quality_score": avg_quality,
+        "total_prompt_tokens": total_prompt_tokens,
+        "total_completion_tokens": total_completion_tokens,
+        "total_tokens": total_tokens
     }
     
     metrics = [{'model': model, 'metrics': s.metrics} for s in stats_list if s.metrics]
@@ -385,7 +434,15 @@ def assemble_circuits(model, files, args, base_dir):
     
     attempts = 0
     while count < args.n_assemble and attempts < 1000:
-        k = random.randint(1, min(args.n_circuits_per_assembly, len(files)))
+        if not files:
+            break
+
+        # Ensure we don't try to pick more files than exist, or if n_circuits_per_assembly is somehow < 1
+        max_k = min(args.n_circuits_per_assembly, len(files))
+        if max_k < 1:
+            max_k = 1
+            
+        k = random.randint(1, max_k)
         selection = tuple(random.sample(files, k))
         if selection in seen:
             attempts += 1
@@ -418,6 +475,7 @@ def main():
     parser.add_argument("--training_n", type=int, default=5)
     parser.add_argument("--training_threshold", type=float, default=0.5)
     parser.add_argument("--improver_model", type=str, default="anthropic/claude-sonnet-4-5")
+    parser.add_argument("--reasoning_effort", type=str, default="high")
     parser.add_argument("--improve_prompt", action="store_true", default=False, help="Enable prompt improvement stage")
 
     args, _ = parser.parse_known_args()
@@ -425,6 +483,19 @@ def main():
         with open(args.config_file, 'r') as f:
             parser.set_defaults(**yaml.safe_load(f))
             args = parser.parse_args()
+
+    # Validate arguments to prevent runtime errors
+    if args.n_circuits_per_assembly < 1:
+        print(f"Warning: n_circuits_per_assembly ({args.n_circuits_per_assembly}) must be >= 1. Setting to 1.")
+        args.n_circuits_per_assembly = 1
+    
+    if args.max_workers < 1:
+        print(f"Warning: max_workers ({args.max_workers}) must be >= 1. Setting to 1.")
+        args.max_workers = 1
+
+    if args.n_programs < 0:
+        print(f"Warning: n_programs ({args.n_programs}) cannot be negative. Setting to 0.")
+        args.n_programs = 0
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     if not args.prompt_dir:
