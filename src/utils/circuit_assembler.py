@@ -9,7 +9,7 @@ def assemble_qiskit(files, output_path, unique_index=0):
 
     # Add required import for diff testing
     diff_test_import = ast.ImportFrom(
-        module='src.utils',
+        module='src.utils.diff_testing',
         names=[ast.alias(name='qiskitTesting', asname=None)],
         level=0
     )

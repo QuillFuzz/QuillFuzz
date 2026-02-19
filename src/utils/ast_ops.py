@@ -256,7 +256,7 @@ def wrap_for_testing_qiskit(code: str) -> str:
         if not has_main: return code
     except: return code
 
-    import_stmt = "from src.utils import qiskitTesting\n"
+    import_stmt = "from src.utils.diff_testing import qiskitTesting\n"
     
     # We want to replace existing main block or append new one
     # For simplicity, we just append. If there's an existing `if __name__ == "__main__": main()`,

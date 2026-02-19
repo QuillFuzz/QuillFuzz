@@ -117,7 +117,7 @@ def _execute_python_code(program_code: str, timeout: int = 30, language: str = '
             else:
                  error = result.stderr if result.stderr else ""
             
-            if not error and result.stdout and ("Panic" in result.stdout or "Error running" in result.stdout):
+            if not error and result.stdout and ("Panic" in result.stdout or "Error" in result.stdout):
                  error = f"Error detected in stdout: {result.stdout}"
             return error, result.stdout, metrics
             
