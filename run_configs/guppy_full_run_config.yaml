@@ -8,7 +8,7 @@ n_fixing_cycles: 2
 max_workers: 10
 n_assemble: 1
 n_circuits_per_assembly: 1
-verbose: true
+verbose: false
 improve_prompt: false
 improver_model: gemini/gemini-3-pro-preview
-reasoning_effort: high
+reasoning_effort: medium

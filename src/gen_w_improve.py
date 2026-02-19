@@ -90,7 +90,8 @@ class ProgramProcessor:
             return None
 
         self.stats.update(stats)
-        self.log(f"{self.filename} Generation Cost: ${stats.get('cost', 0.0):.6f} | Total Tokens: {stats.get('total_tokens', 0)}")
+        self.log(f"{self.filename} Generation Cost: ${stats.get('cost', 0.0):.6f} | "
+                 f"Tokens (In/Out/Total): {stats.get('prompt_tokens', 0)}/{stats.get('completion_tokens', 0)}/{stats.get('total_tokens', 0)}")
         return code
 
     def compile_check(self, code):
@@ -147,7 +148,8 @@ class ProgramProcessor:
                 break
             
             self.stats.update(stats)
-            self.log(f"{self.filename} Fixing (Cycle {cycle+1}) Cost: ${stats.get('cost', 0.0):.6f}")
+            self.log(f"{self.filename} Fixing (Cycle {cycle+1}) Cost: ${stats.get('cost', 0.0):.6f} | "
+                     f"Tokens (In/Out/Total): {stats.get('prompt_tokens', 0)}/{stats.get('completion_tokens', 0)}/{stats.get('total_tokens', 0)}")
 
             # Verify fix (Compile only first)
             compile_ok, compile_err = self.compile_check(fixed_code)
@@ -346,18 +348,17 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
     logger.log(f"Prompt: {prompt_filename}")
     logger.log(f"Reasoning Effort: {args.reasoning_effort}")
 
-    if args.verbose:
-        if os.path.isabs(prompt_filename):
-            prompt_path = prompt_filename
-        else:
-            prompt_path = os.path.join(args.prompt_dir, prompt_filename)
-        
-        try:
-            with open(prompt_path, 'r') as f:
-                prompt_content = f.read()
-            logger.log(f"\n--- Prompt Content ---\n{prompt_content}\n----------------------\n")
-        except Exception as e:
-            logger.log(f"Could not read prompt file for verbose logging: {e}")
+    if os.path.isabs(prompt_filename):
+        prompt_path = prompt_filename
+    else:
+        prompt_path = os.path.join(args.prompt_dir, prompt_filename)
+    
+    try:
+        with open(prompt_path, 'r') as f:
+            prompt_content = f.read()
+        logger.log(f"\n--- Prompt Content ---\n{prompt_content}\n----------------------\n")
+    except Exception as e:
+        logger.log(f"Could not read prompt file for verbose logging: {e}")
 
     successful_files = []
     stats_list = []

@@ -10,5 +10,5 @@ n_fixing_cycles: 2
 max_workers: 10
 n_assemble: 10
 n_circuits_per_assembly: 2
-verbose: true
-reasoning_effort: medium
+verbose: false
+reasoning_effort: high
