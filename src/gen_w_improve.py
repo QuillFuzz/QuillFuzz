@@ -142,7 +142,15 @@ class ProgramProcessor:
                 return None
 
             prompt = get_dynamic_prompt(prompt_path, faulty_code=current_code, error_message=current_error)
+            
+            if not prompt:
+                self.log(f"Error: Generated prompt for {self.filename} (cycle {cycle+1}) is empty.\n")
+                break
+
             fixed_code, stats, err = ask_any_model(self.model, prompt, reasoning_effort=self.config.reasoning_effort)
+
+            if err:
+                 self.log(f"Error from LLM during fixing cycle {cycle+1} for {self.filename}: {err}")
 
             if not fixed_code:
                 self.log(f"Fixing cycle {cycle+1} failed for {self.filename}: {err}\n")
