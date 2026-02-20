@@ -44,6 +44,7 @@ conda install -y \
     curl \
     compilers \
     pkgconfig \
+    conan \
     gdb \
     zlib \
     libxml2 \
