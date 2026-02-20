@@ -1,0 +1,11 @@
+services:
+  quillfuzz:
+    build: .
+    volumes:
+      # Mount current directory to /QuillFuzz inside container
+      - .:/QuillFuzz
+    # Keep the container running
+    command: tail -f /dev/null
+    environment:
+        # Pass through any needed env vars here
+        - RUST_BACKTRACE=1
