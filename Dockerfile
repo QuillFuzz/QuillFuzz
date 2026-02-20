@@ -1,11 +1,14 @@
-# Use a base image with glibc (Debian-based) to ensure compatibility with most tools
-FROM python:3.11-bookworm
+# Use Ubuntu 24.04 (Noble) as base image to provide newer glibc (>=2.38) required by tket
+FROM ubuntu:24.04
 
 # Avoid interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Update and install basic system dependencies
+# Update and install basic system dependencies including Python
 RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-venv \
     curl \
     git \
     build-essential \
@@ -29,6 +32,10 @@ RUN apt-get update && apt-get install -y \
     time \
     && rm -rf /var/lib/apt/lists/*
 
+# Create and activate a virtual environment
+RUN python3 -m venv /opt/venv
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
 # Set LLVM environment variables for qir-runner
 ENV LLVM_SYS_140_PREFIX=/usr/lib/llvm-14
@@ -67,22 +74,21 @@ RUN cp target/release/qir-runner /usr/local/bin/
 # Install python package part of qir-runner
 WORKDIR /QuillFuzz/libs/qir-runner/pip
 # Using uv for fast installation
-RUN uv pip install --system .
+RUN uv pip install .
 
 # --- Install Main Project Dependencies ---
 WORKDIR /QuillFuzz
 
-# We use --system to install into the container's global python environment, 
-# which is fine for a Docker container.
+# We use the virtual environment, so no --system needed.
 # "setuptools<70" and "wheel" are installed first to fix build isolation issues
-RUN uv pip install --system "setuptools<70" wheel maturin
+RUN uv pip install "setuptools<70" wheel maturin
 
 # Install dependencies
 # We use the list from setup_deps.sh. 
 # Notes:
 # - git+https://github.com/CQCL/hugr-qir.git is installed directly
 # - We use --no-build-isolation to use the system installed tools/headers
-RUN uv pip install --system --no-build-isolation \
+RUN uv pip install --no-build-isolation \
     pytket \
     qiskit \
     pytket-qiskit \
