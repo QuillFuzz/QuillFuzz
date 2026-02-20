@@ -121,8 +121,12 @@ uv pip install .
 popd
 
 echo ">>> 7. Installing Python Dependencies..."
+# Ensure legacy setuptools and wheel are installed first to provide pkg_resources for build dependencies
+uv pip install "setuptools<70" wheel
+
 # Standard PyPI packages
-uv pip install \
+# Using --no-build-isolation prevents the build from failing due to missing build dependencies (pkg_resources)
+uv pip install --no-build-isolation \
     pytket \
     qiskit \
     pytket-qiskit \
