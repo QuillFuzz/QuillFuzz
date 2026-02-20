@@ -26,6 +26,7 @@ RUN apt-get update && apt-get install -y \
     clang-14 \
     libclang-14-dev \
     libpolly-14-dev \
+    time \
     && rm -rf /var/lib/apt/lists/*
 
 

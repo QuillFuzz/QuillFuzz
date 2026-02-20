@@ -1,5 +1,4 @@
 #!/bin/bash
-source .venv/bin/activate || { echo "Failed to activate virtual environment"; exit 1; }
 export PYTHONPATH=$(pwd)/src:$PYTHONPATH
 
 # Run the generator first, saving into a named run with date-stamped folder
