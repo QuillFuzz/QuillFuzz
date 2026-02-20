@@ -3,6 +3,14 @@
 # Exit immediately if a command exits with a non-zero status
 set -e
 
+echo ">>> 0. Securing Working Directory..."
+# Find exactly where this script lives, and CD into the root of the project
+# (Assuming this script is in a 'scripts' folder, this moves up one directory)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+cd "$PROJECT_ROOT"
+echo "Working directory set to: $PROJECT_ROOT"
+
 echo ">>> 1. Installing Miniforge (Bypasses Anaconda ToS)..."
 if [ ! -d "$HOME/miniforge3" ]; then
     echo "Downloading and installing Miniforge..."
@@ -14,13 +22,12 @@ else
     echo "Miniforge already installed."
 fi
 
-# Initialize Conda for the current script session
+# Initialize Conda/Mamba for the current script session
 export MAMBA_ROOT_PREFIX="$HOME/miniforge3"
 source "$HOME/miniforge3/etc/profile.d/conda.sh"
-source "$HOME/miniforge3/etc/profile.d/mamba.sh" # Miniforge includes mamba, a faster resolver
+source "$HOME/miniforge3/etc/profile.d/mamba.sh"
 
 echo ">>> 2. Setting up Conda Environment & Dependencies..."
-# Create an environment called 'quillfuzz_env' if it doesn't exist
 if ! conda info --envs | grep -q 'quillfuzz_env'; then
     conda create -y -n quillfuzz_env python=3.11
 fi
@@ -28,6 +35,7 @@ fi
 conda activate quillfuzz_env
 
 # Install pre-compiled binaries from conda-forge
+# Added pkgconfig to ensure Rust can find the C-libraries!
 conda install -y \
     llvmdev=14 \
     cmake \
@@ -35,6 +43,7 @@ conda install -y \
     git \
     curl \
     compilers \
+    pkgconfig \
     gdb \
     zlib \
     libxml2 \
@@ -44,36 +53,39 @@ conda install -y \
 # Point to Conda's LLVM 14 installation path (Crucial for qir-runner)
 export LLVM_SYS_140_PREFIX="$CONDA_PREFIX"
 
-# Add Conda environment, Cargo, and Local bin to PATH
+# Add Conda environment, Cargo, Local bin, and user local bin to PATH
 export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 
-echo ">>> 4. Installing Rust (if missing)..."
-if ! command -v cargo &> /dev/null; then
+echo ">>> 3. Installing/Updating Rust..."
+if ! command -v rustup &> /dev/null; then
+    echo "Installing the latest Rust toolchain..."
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-    source "$HOME/.cargo/env"
 else
-    echo "Rust is already installed."
+    echo "Updating Rust to the latest stable version..."
+    source "$HOME/.cargo/env" || true
+    rustup update stable
 fi
+source "$HOME/.cargo/env"
 
-echo ">>> 5. Installing uv (if missing)..."
+echo ">>> 4. Installing/Updating uv..."
 if ! command -v uv &> /dev/null; then
     curl -LsSf https://astral.sh/uv/install.sh | sh
 else
-    echo "uv is already installed."
+    echo "Updating uv..."
+    uv self update || true
 fi
 
-echo ">>> 6. Initializing uv Project..."
-# Initialize only if pyproject.toml doesn't exist
+echo ">>> 5. Initializing uv Project..."
 if [ ! -f "pyproject.toml" ]; then
     uv init --no-workspace
 fi
 
-# Create virtual environment if it doesn't exist
+# Create virtual environment EXPLICITLY using the Conda Python version
 if [ ! -d ".venv" ]; then
-    uv venv
+    uv venv --python="$CONDA_PREFIX/bin/python"
 fi
 
-echo ">>> 7. Building 'qir-runner' from source..."
+echo ">>> 6. Building 'qir-runner' from source..."
 if [ ! -d "libs/qir-runner" ]; then
     echo "Cloning qir-runner repository..."
     rm -rf libs/qir-runner  
@@ -85,24 +97,30 @@ fi
 
 pushd libs/qir-runner
 
-# Build the Rust binary
+# Keep massive temporary build files locally so we don't blow up the server's shared /tmp
+export CARGO_TARGET_DIR="$PWD/target"
+
 echo "Building qir-runner Rust components..."
 cargo build --release
 
-# RESCUE THE BINARY: Copy it to ~/.local/bin before we delete the libs folder later
 echo "Moving qir-runner binary to local bin..."
 mkdir -p "$HOME/.local/bin"
-cp target/release/qir-runner "$HOME/.local/bin/"
+# Verify the binary exists before moving to prevent silent failures
+if [ -f "target/release/qir-runner" ]; then
+    cp target/release/qir-runner "$HOME/.local/bin/"
+else
+    echo "ERROR: qir-runner binary was not generated!"
+    exit 1
+fi
 
-# Install the Python package directly into the uv environment
 echo "Installing qir-runner Python package..."
 cd pip
 uv pip install .
 
 popd
 
-echo ">>> 8. Installing Python Dependencies..."
-# A. Standard PyPI packages
+echo ">>> 7. Installing Python Dependencies..."
+# Standard PyPI packages
 uv pip install \
     pytket \
     qiskit \
@@ -120,35 +138,28 @@ uv pip install \
     litellm \
     coverage
 
-# Ensure guppylang is the latest version
 uv pip install --upgrade guppylang
-
-# B. Git dependencies
 uv pip install git+https://github.com/CQCL/hugr-qir.git
-
-# C. Install local packages (NO -e flag, so we can safely clean up the folder later)
 uv pip install .
 
-# If running in GitHub Actions, save these variables for future steps
+# GitHub Actions Variables Setup
 if [ -n "$GITHUB_ENV" ]; then
     echo "LLVM_SYS_140_PREFIX=$LLVM_SYS_140_PREFIX" >> "$GITHUB_ENV"
     echo "$HOME/.cargo/bin" >> $GITHUB_PATH
     echo "$HOME/.local/bin" >> $GITHUB_PATH
 fi
 
-echo ">>> 9. Cleaning up caches and build artifacts..."
-
-# Clean Conda cache (removes downloaded tarballs)
+echo ">>> 8. Cleaning up caches and build artifacts..."
 conda clean -a -y
-
-# Clean uv cache
 uv cache clean
-
-# Clean global Cargo registry cache
 rm -rf "$HOME/.cargo/registry/cache"
 
-# Completely remove the cloned source code and all its massive build artifacts
-echo "Removing cloned repositories..."
+echo "Removing cloned repositories to save space..."
 rm -rf libs/
 
-echo ">>> Setup Complete! Run 'conda activate qir_env' to start working."
+echo ">>> Setup Complete! Double checking binaries..."
+ls -la "$HOME/.local/bin/qir-runner" || echo "Warning: qir-runner not found in PATH."
+
+echo "--------------------------------------------------------"
+echo "To start working, run: conda activate quillfuzz_env"
+echo "--------------------------------------------------------"
