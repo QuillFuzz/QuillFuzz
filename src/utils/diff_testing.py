@@ -14,7 +14,7 @@
     - ks value printed in logs
 """
 
-from typing import List, Tuple, Any
+from typing import List, Tuple, Any, Optional
 from collections import Counter
 from itertools import zip_longest
 from scipy.stats import ks_2samp
@@ -73,6 +73,42 @@ class Base():
         self.parser.add_argument('--plot', action='store_true',help='Plot results after running circuit')
         self.args = self.parser.parse_args()
         self.plot : bool = self.args.plot
+        self.run_output_dir: pathlib.Path = self._resolve_run_output_dir()
+
+    def _resolve_run_output_dir(self) -> pathlib.Path:
+        '''
+        Resolve the active run directory where artifacts should be saved.
+        Priority:
+        1) QUILLFUZZ_RUN_DIR env var
+        2) OUTPUT_DIR if it already points to a Complete_run* directory
+        3) Most recent Complete_run* directory under OUTPUT_DIR
+        4) OUTPUT_DIR fallback
+        '''
+        env_run_dir = os.getenv("QUILLFUZZ_RUN_DIR")
+        if env_run_dir:
+            resolved_env_dir = pathlib.Path(env_run_dir).expanduser().resolve()
+            resolved_env_dir.mkdir(parents=True, exist_ok=True)
+            return resolved_env_dir
+
+        output_dir = pathlib.Path(self.OUTPUT_DIR).resolve()
+
+        if output_dir.name.startswith("Complete_run"):
+            return output_dir
+
+        try:
+            complete_run_dirs = [
+                p for p in output_dir.iterdir()
+                if p.is_dir() and p.name.startswith("Complete_run")
+            ]
+            if complete_run_dirs:
+                return max(complete_run_dirs, key=lambda p: p.stat().st_mtime)
+        except Exception:
+            pass
+
+        return output_dir
+
+    def get_interesting_circuits_dir(self) -> pathlib.Path:
+        return self.run_output_dir / "interesting_circuits"
 
     def qnexus_login(self) -> None:
         '''
@@ -142,24 +178,51 @@ class Base():
     def compare_statevectors(self, sv1 : NDArray[np.complex128], sv2 : NDArray[np.complex128], precision: int = 6) -> float:
         return np.round(abs(np.vdot(sv1, sv2)), precision)
 
-    def save_interesting_circuit(self, circuit_number: int, interesting_dir: pathlib.Path) -> None:
+    def save_interesting_circuit(self, circuit_number: int, interesting_dir: Optional[pathlib.Path] = None) -> None:
         '''
         Saves an interesting circuit file to the specified directory
         '''
 
+        if interesting_dir is None:
+            interesting_dir = self.get_interesting_circuits_dir()
+
         interesting_dir.mkdir(parents=True, exist_ok=True)
+
+        circuit_source_path = None
+        source_file_env = os.getenv("QUILLFUZZ_SOURCE_FILE")
+        if source_file_env:
+            candidate = pathlib.Path(source_file_env).expanduser().resolve()
+            if candidate.exists() and candidate.suffix == ".py":
+                circuit_source_path = candidate
+
+        if circuit_source_path is not None:
+            base_name = circuit_source_path.name
+        else:
+            base_name = f"circuit{circuit_number}.py"
+
+        circuit_dest_path = interesting_dir / base_name
+        if circuit_dest_path.exists() and circuit_source_path is not None and circuit_dest_path.resolve() != circuit_source_path.resolve():
+            stem = circuit_dest_path.stem
+            suffix = circuit_dest_path.suffix
+            idx = 1
+            while True:
+                candidate_dest = interesting_dir / f"{stem}_flagged_{idx}{suffix}"
+                if not candidate_dest.exists():
+                    circuit_dest_path = candidate_dest
+                    break
+                idx += 1
         
-        circuit_source_path = self.OUTPUT_DIR / f"circuit{circuit_number}" / "circuit.py"
-        circuit_dest_path = interesting_dir / f"circuit{circuit_number}.py"
-        
-        if circuit_source_path.exists():
+        if circuit_source_path is not None and circuit_source_path.exists():
             try:
                 shutil.copy2(circuit_source_path, circuit_dest_path)
                 print(f"Interesting circuit saved to: {circuit_dest_path}")
             except Exception as e:
                 print(f"Error copying circuit file: {e}")
         else:
-            print(f"Warning: Circuit file not found at {circuit_source_path}")
+            print(
+                "Warning: Circuit source file could not be resolved. "
+                f"Set QUILLFUZZ_SOURCE_FILE to the tested program path. Current value: {source_file_env}"
+            )
 
     def plot_histogram(self, res : Counter[int, int], title : str, compilation_level : int, circuit_number : int = 0):
         plots_dir = self.OUTPUT_DIR / f"circuit{circuit_number}"
@@ -228,12 +291,12 @@ class pytketTesting(Base):
 
         except Exception as e:
             print("Exception :", traceback.format_exc())
-            self.save_interesting_circuit(circuit_number, self.OUTPUT_DIR / "interesting_circuits")
+            self.save_interesting_circuit(circuit_number)
 
         # Dump files to a "interesting circuits" folder if found interesting testcase
         if is_testcase_interesting:
             print(f"Interesting circuit found: {circuit_number}")
-            self.save_interesting_circuit(circuit_number, self.OUTPUT_DIR / "interesting_circuits")
+            self.save_interesting_circuit(circuit_number)
 
     def run_circ_statevector(self, circuit : Circuit, circuit_number : int) -> NDArray[np.complex128]:
         '''
@@ -335,7 +398,7 @@ class pytketTesting(Base):
             # Heuristic to determine if the testcase is interesting
             if ks_value < 0.05:
                 print(f"Interesting circuit found: {circuit_number}")
-                self.save_interesting_circuit(circuit_number, self.OUTPUT_DIR / "interesting_circuits")
+                self.save_interesting_circuit(circuit_number)
             
             if self.plot:
                 self.plot_histogram(counts_guppy, "Guppy Circuit Results", 0, circuit_number)
@@ -408,7 +471,7 @@ class pytketTesting(Base):
 
             if ks_value < 0.05:
                 print(f"Interesting circuit found: {circuit_number}")
-                self.save_interesting_circuit(circuit_number, self.OUTPUT_DIR / "interesting_circuits")
+                self.save_interesting_circuit(circuit_number)
 
         except Exception as e:
             print("Error during QIR conversion or execution:", e)
@@ -442,7 +505,7 @@ class qiskitTesting(Base):
 
             if ks_value < 0.05:
                 print(f"Interesting circuit found: {circuit_number}")
-                self.save_interesting_circuit(circuit_number, self.OUTPUT_DIR / "interesting_circuits")
+                self.save_interesting_circuit(circuit_number)
 
             # plot results
             if self.plot:
@@ -483,7 +546,7 @@ class guppyTesting(Base):
 
         except FuturesTimeoutError:
             print(f"Compilation timed out after {self.TIMEOUT_SECONDS} seconds")
-            self.save_interesting_circuit(circuit_number, self.OUTPUT_DIR / "interesting_circuits")
+            self.save_interesting_circuit(circuit_number)
             return
         except Exception as e:
             from guppylang_internals.error import GuppyError
@@ -500,7 +563,7 @@ class guppyTesting(Base):
             # If it's not a GuppyError, fall back to default hook
             print("Error during compilation:", e)
             print("Exception :", traceback.format_exc())
-            self.save_interesting_circuit(circuit_number, self.OUTPUT_DIR / "interesting_circuits")
+            self.save_interesting_circuit(circuit_number)
             return
 
         if hugr is None:
@@ -531,7 +594,7 @@ class guppyTesting(Base):
 
         except Exception as e:
             print(f"Error running uncompiled circuit: {e}")
-            self.save_interesting_circuit(circuit_number, self.OUTPUT_DIR / "interesting_circuits")
+            self.save_interesting_circuit(circuit_number)
             return
 
         # Select a random pass
@@ -580,7 +643,7 @@ class guppyTesting(Base):
                  # If base had counts but opt doesn't, that's interesting (or a bug)
                  if counts_base:
                      print(f"Interesting discrepancy: Optimized circuit lost all outputs.")
-                     self.save_interesting_circuit(circuit_number, self.OUTPUT_DIR / "interesting_circuits")
+                     self.save_interesting_circuit(circuit_number)
                  return
             
             # KS Test
@@ -589,7 +652,7 @@ class guppyTesting(Base):
             
             if ks_value < 0.05:
                 print(f"Interesting circuit found (Low KS): {circuit_number}")
-                self.save_interesting_circuit(circuit_number, self.OUTPUT_DIR / "interesting_circuits")
+                self.save_interesting_circuit(circuit_number)
                 
             if self.plot:
                 self.plot_histogram(counts_base, f"Guppy Base Results", 0, circuit_number)
@@ -598,7 +661,7 @@ class guppyTesting(Base):
         except Exception as e:
             print(f"Error executing pass {pass_name} or running result: {e}")
             traceback.print_exc()
-            self.save_interesting_circuit(circuit_number, self.OUTPUT_DIR / "interesting_circuits")
+            self.save_interesting_circuit(circuit_number)
             
 
     def guppy_qir_diff_test(self, circuit : Any, circuit_number : int, total_num_qubits : int) -> None:
@@ -653,7 +716,7 @@ class guppyTesting(Base):
 
             if ks_value < 0.05:
                 print(f"Interesting circuit found: {circuit_number}")
-                self.save_interesting_circuit(circuit_number, self.OUTPUT_DIR / "interesting_circuits")
+                self.save_interesting_circuit(circuit_number)
 
             if self.plot:
                 self.plot_histogram(counts_guppy, "Guppy Circuit Results", 0, circuit_number)
@@ -674,4 +737,4 @@ class guppyTesting(Base):
             # If it's not a GuppyError, fall back to default hook
             print("Error during compilation:", e)
             print("Exception :", traceback.format_exc())
-            self.save_interesting_circuit(circuit_number, self.OUTPUT_DIR / "interesting_circuits")
+            self.save_interesting_circuit(circuit_number)

@@ -5,6 +5,7 @@ export PYTHONPATH=$(pwd)/src:$PYTHONPATH
 # Run the generator first, saving into a named run with date-stamped folder
 # Get date and time for unique run naming
 RUN_NAME="Complete_run_qiskit_$(date +'%Y%m%d_%H%M%S')"
+export QUILLFUZZ_RUN_DIR="$(pwd)/local_saved_circuits/$RUN_NAME"
 python src/gen_w_improve.py --config_file run_configs/qiskit_full_run_config.yaml --run_name $RUN_NAME
 
 ASSEMBLED_DIR="local_saved_circuits/$RUN_NAME/assembled"

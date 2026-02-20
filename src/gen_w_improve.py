@@ -113,7 +113,8 @@ class ProgramProcessor:
 
     def run_check(self, code):
         self.log(f"--- {self.elapsed} Running {self.filename} ---\n")
-        error, _, metrics, runtime_code = run_generated_program(code, language=self.config.language)
+        source_file_path = os.path.join(self.config.current_generated_dir, self.filename) if hasattr(self.config, "current_generated_dir") and self.config.current_generated_dir else None
+        error, _, metrics, runtime_code = run_generated_program(code, language=self.config.language, source_file_path=source_file_path)
         self.stats.metrics['execution'] = metrics
         
         # Store execution quality score separately
@@ -176,6 +177,7 @@ class ProgramProcessor:
 
     def process(self, generated_dir, failed_dir, prompt_filename="generation_prompt.txt", compile_only=False):
         self.config.compile_only = compile_only # augment config temporarily
+        self.config.current_generated_dir = generated_dir
         
         code = self.generate(prompt_filename)
         if not code:
@@ -184,11 +186,12 @@ class ProgramProcessor:
         compile_ok, compile_err = self.compile_check(code)
         
         if compile_ok:
-             if not compile_only:
-                 self.run_check(code)
-             
              save_path = os.path.join(generated_dir, self.filename)
              save_text_to_file(code, save_path)
+
+             if not compile_only:
+                 self.run_check(code)
+
              return save_path, self.stats, list(set(self.encountered_errors)), False
 
         # If compilation failed, try fixing
@@ -507,6 +510,7 @@ def main():
     run_id = args.run_name or time.strftime("%Y%m%d_%H%M%S_improved")
     common_run_dir = os.path.join(args.output_dir, run_id)
     os.makedirs(common_run_dir, exist_ok=True)
+    os.environ["QUILLFUZZ_RUN_DIR"] = os.path.abspath(common_run_dir)
     logfile_path = os.path.join(common_run_dir, "execution.log")
 
     all_stats = []

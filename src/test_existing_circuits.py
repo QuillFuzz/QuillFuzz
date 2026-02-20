@@ -32,9 +32,9 @@ def process_single_file(file_path, logfile, log_lock, verbose=False, language="g
             return False, {}
 
         if compile_only:
-            run_error, run_stdout, metrics, wrapped_code = compile_generated_program(code, timeout=120, language=language)
+            run_error, run_stdout, metrics, wrapped_code = compile_generated_program(code, timeout=120, language=language, source_file_path=file_path)
         else:
-            run_error, run_stdout, metrics, wrapped_code = run_generated_program(code, timeout=120, language=language)
+            run_error, run_stdout, metrics, wrapped_code = run_generated_program(code, timeout=120, language=language, source_file_path=file_path)
 
         output_buffer.append(f"{filename} Metrics: {metrics}\n")
         
@@ -77,6 +77,11 @@ def main():
     if not os.path.isdir(input_dir):
         print(f"Error: {input_dir} is not a directory.")
         return
+
+    if os.path.basename(input_dir) == "assembled":
+        os.environ["QUILLFUZZ_RUN_DIR"] = os.path.dirname(input_dir)
+    else:
+        os.environ["QUILLFUZZ_RUN_DIR"] = input_dir
 
     # Find all .py files to run
     files = sorted([os.path.join(input_dir, f) for f in os.listdir(input_dir) if f.endswith('.py')])

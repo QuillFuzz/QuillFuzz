@@ -14,7 +14,7 @@ from .ast_ops import (
     get_code_complexity_metrics
 )
 
-def _execute_python_code(program_code: str, timeout: int = 30, language: str = 'guppy', coverage_source: str = None):
+def _execute_python_code(program_code: str, timeout: int = 30, language: str = 'guppy', coverage_source: str = None, source_file_path: str = None):
     """
     Internal helper to execute prepared Python code with coverage and metrics tracking.
     """
@@ -42,6 +42,8 @@ def _execute_python_code(program_code: str, timeout: int = 30, language: str = '
             # Prepare environment
             env = os.environ.copy()
             env["COVERAGE_FILE"] = coverage_file
+            if source_file_path:
+                env["QUILLFUZZ_SOURCE_FILE"] = os.path.abspath(source_file_path)
              # Add project root to PYTHONPATH
             project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             
@@ -137,7 +139,7 @@ def _execute_python_code(program_code: str, timeout: int = 30, language: str = '
     except Exception as e:
         return f"ERROR: Failed to execute program: {str(e)}", "", {}
 
-def compile_generated_program(program_code: str, timeout: int = 30, language: str = 'guppy', coverage_source: str = None):
+def compile_generated_program(program_code: str, timeout: int = 30, language: str = 'guppy', coverage_source: str = None, source_file_path: str = None):
     """
     Compiles (or checks syntax/imports) of generated Python program.
     Does NOT run full tests, just verifies valid compilation/construction.
@@ -155,10 +157,10 @@ def compile_generated_program(program_code: str, timeout: int = 30, language: st
         wrapped_code = clean_code
     
     # Here, the wall_time metric will reflect compilation time only.
-    error, stdout, metrics = _execute_python_code(wrapped_code, timeout, language, coverage_source)
+    error, stdout, metrics = _execute_python_code(wrapped_code, timeout, language, coverage_source, source_file_path)
     return error, stdout, metrics, wrapped_code
 
-def run_generated_program(program_code: str, timeout: int = 30, language: str = 'guppy', coverage_source: str = None):
+def run_generated_program(program_code: str, timeout: int = 30, language: str = 'guppy', coverage_source: str = None, source_file_path: str = None):
     """
     Execute generated Python program with full test harness (KS diff test).
     
@@ -175,7 +177,7 @@ def run_generated_program(program_code: str, timeout: int = 30, language: str = 
         wrapped_code = clean_code
     
     # Here, the wall_time metric will reflect full execution time, including execution and compilation.
-    error, stdout, metrics = _execute_python_code(wrapped_code, timeout, language, coverage_source)
+    error, stdout, metrics = _execute_python_code(wrapped_code, timeout, language, coverage_source, source_file_path)
     return error, stdout, metrics, wrapped_code
 
 
