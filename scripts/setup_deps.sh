@@ -51,6 +51,10 @@ conda install -y \
     ncurses \
     libffi
 
+# Initialize Conan profile if it doesn't exist
+# force=True might be needed if it exists but is wrong, but 'detect' is usually safe first run
+conan profile detect --force || true
+
 # Point to Conda's LLVM 14 installation path (Crucial for qir-runner)
 export LLVM_SYS_140_PREFIX="$CONDA_PREFIX"
 
