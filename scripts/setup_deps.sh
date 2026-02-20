@@ -58,6 +58,9 @@ conan profile detect --force || true
 # Point to Conda's LLVM 14 installation path (Crucial for qir-runner)
 export LLVM_SYS_140_PREFIX="$CONDA_PREFIX"
 
+# Help bindgen find the standard C headers
+export BINDGEN_EXTRA_CLANG_ARGS="-I$CONDA_PREFIX/include -I$CONDA_PREFIX/lib/clang/14.0.6/include"
+
 # Add Conda environment, Cargo, Local bin, and user local bin to PATH
 export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 
