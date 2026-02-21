@@ -160,7 +160,7 @@ def compile_generated_program(program_code: str, timeout: int = 30, language: st
     error, stdout, metrics = _execute_python_code(wrapped_code, timeout, language, coverage_source, source_file_path)
     return error, stdout, metrics, wrapped_code
 
-def run_generated_program(program_code: str, timeout: int = 30, language: str = 'guppy', coverage_source: str = None, source_file_path: str = None):
+def run_generated_program(program_code: str, timeout: int = 30, language: str = 'guppy', coverage_source: str = None, source_file_path: str = None, circuit_id: int = 0):
     """
     Execute generated Python program with full test harness (KS diff test).
     
@@ -170,9 +170,9 @@ def run_generated_program(program_code: str, timeout: int = 30, language: str = 
     clean_code = strip_markdown_syntax(program_code)
     
     if language == 'guppy':
-        wrapped_code = wrap_for_testing_guppy(clean_code)
+        wrapped_code = wrap_for_testing_guppy(clean_code, circuit_id)
     elif language == 'qiskit':
-        wrapped_code = wrap_for_testing_qiskit(clean_code)
+        wrapped_code = wrap_for_testing_qiskit(clean_code, circuit_id)
     else:
         wrapped_code = clean_code
     

@@ -198,7 +198,7 @@ def wrap_for_compilation_guppy(code: str) -> str:
         # If no wrapper needed (e.g. main has no args), just compile main
         return code + f"\n{wrapper_name}.compile()\n"
 
-def wrap_for_testing_guppy(code: str) -> str:
+def wrap_for_testing_guppy(code: str, circuit_id: int = 0) -> str:
     wrapper_name, wrapper_code = _generate_guppy_wrapper_body(code)
     if wrapper_name is None: return code
     
@@ -207,7 +207,7 @@ def wrap_for_testing_guppy(code: str) -> str:
     # Need to verify if imports already exist in code to avoid dupes? 
     # Python doesn't crash on duplicate imports, so prepending is fine.
     
-    test_harness = f"\n\ngt = guppyTesting()\ngt.ks_diff_test({wrapper_name}, 0)\n"
+    test_harness = f"\n\ngt = guppyTesting()\ngt.ks_diff_test({wrapper_name}, {circuit_id})\n"
     
     return import_stmt + code + wrapper_code + test_harness
 
@@ -244,7 +244,7 @@ def wrap_for_compilation_qiskit(code: str) -> str:
     wrapper_code =  "\nif __name__ == '__main__':\n\t main()\n"
     return code + wrapper_code
 
-def wrap_for_testing_qiskit(code: str) -> str:
+def wrap_for_testing_qiskit(code: str, circuit_id: int = 0) -> str:
     # Basic check for main
     try:
         tree = ast.parse(code)
@@ -263,10 +263,10 @@ def wrap_for_testing_qiskit(code: str) -> str:
     # execution might fall through or run twice if we aren't careful.
     # But usually generated code doesn't have the block yet.
     
-    wrapper_code = """
+    wrapper_code = f"""
 if __name__ == '__main__':
     qt = qiskitTesting()
-    qt.ks_diff_test(main(), 0)
+    qt.ks_diff_test(main(), {circuit_id})
 """
     return import_stmt + code + wrapper_code
 

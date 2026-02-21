@@ -115,7 +115,7 @@ class ProgramProcessor:
     def run_check(self, code):
         self.log(f"--- {self.elapsed} Running {self.filename} ---\n")
         source_file_path = os.path.join(self.config.current_generated_dir, self.filename) if hasattr(self.config, "current_generated_dir") and self.config.current_generated_dir else None
-        error, _, metrics, runtime_code = run_generated_program(code, language=self.config.language, source_file_path=source_file_path)
+        error, output, metrics, runtime_code = run_generated_program(code, language=self.config.language, source_file_path=source_file_path, circuit_id=self.index)
         self.stats.metrics['execution'] = metrics
         
         # Store execution quality score separately
@@ -130,6 +130,8 @@ class ProgramProcessor:
             return False, error
         
         self.log(f"{self.filename} ran successfully.\n")
+        if output:
+            self.log(f"--- {self.filename} Output ---\n{output}\n--------------------------\n")
         return True, ""
 
     def fix_loop(self, code, initial_error):
@@ -464,7 +466,7 @@ def assemble_circuits(model, files, args, base_dir):
         attempts = 0
         
         try:
-            assemble(list(selection), os.path.join(out_dir, f"{model.replace('/', '_')}_{count}.py"), count, args.language)
+            assemble(list(selection), os.path.join(out_dir, f"{model.replace('/', '_')}_assembled_{count}.py"), count, args.language)
             count += 1
             pbar.update(1)
         except Exception:
