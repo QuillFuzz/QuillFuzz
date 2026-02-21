@@ -16,25 +16,67 @@ and then
 docker compose exec quillfuzz bash
 ```
 
+### Alternative Setup (Docker)
+
+If `docker compose` is not available, you can build and run using standard docker commands:
+
+```bash
+# Build the image
+docker build -t quillfuzz .
+
+# Run the container (mounts current directory and runs in background)
+docker run -d \
+  -v "$(pwd):/QuillFuzz" \
+  -e RUST_BACKTRACE=1 \
+  --name quillfuzz \
+  quillfuzz \
+  tail -f /dev/null
+
+# Enter the container
+docker exec -it quillfuzz bash
+```
+
+### Alternative Setup (Podman)
+
+If you prefer using Podman or if Docker is not available:
+
+```bash
+# Build the image
+podman build -t quillfuzz .
+
+# Run the container (interactive mode with volume mount)
+podman run -it --rm \
+  -v "$(pwd):/QuillFuzz" \
+  -e RUST_BACKTRACE=1 \
+  --name quillfuzz \
+  quillfuzz:latest \
+  bash
+```
+
 ## Running QuillFuzz
 
-Note: You need to provide API keys for LLM access, stored in the `.env` environment file.
+### Prerequisites
 
-To run pre-configured tests, you can run:
+1.  **API Keys**: You need to provide API keys for LLM access. Create a `.env` file in the root directory and add your keys there.
+
+### Running Campaigns
+
+To run pre-configured fuzzing campaigns (Guppy or Qiskit), ensure the scripts are executable:
+
+```bash
+chmod +x ./scripts/Complete_run_guppy.sh ./scripts/Complete_run_qiskit.sh
+```
+
+Then run either script inside the container:
+
+**For Guppy Fuzzing:**
 
 ```bash
 ./scripts/Complete_run_guppy.sh
 ```
 
-or 
+**For Qiskit Fuzzing:**
 
 ```bash
 ./scripts/Complete_run_qiskit.sh
-```
-
-to run guppy or qiskit fuzzing campaigns. Remember to grant them execution permission:
-
-```bash
-chmod +x ./scripts/Complete_run_qiskit.sh
-chmod +x ./scripts/Complete_run_guppy.sh
 ```

@@ -109,6 +109,7 @@ class ProgramProcessor:
             return False, error
         
         self.stats.quality_score = metrics.get('quality_score', 0.0)
+        self.log(f"{self.filename} compiled successfully.\n")
         return True, ""
 
     def run_check(self, code):
@@ -194,13 +195,13 @@ class ProgramProcessor:
         compile_ok, compile_err = self.compile_check(code)
         
         if compile_ok:
-             save_path = os.path.join(generated_dir, self.filename)
-             save_text_to_file(code, save_path)
+            save_path = os.path.join(generated_dir, self.filename)
+            save_text_to_file(code, save_path)
 
-             if not compile_only:
-                 self.run_check(code)
+            if not compile_only:
+                self.run_check(code)
 
-             return save_path, self.stats, list(set(self.encountered_errors)), False
+            return save_path, self.stats, list(set(self.encountered_errors)), False
 
         # If compilation failed, try fixing
         fixed_code = self.fix_loop(code, compile_err)
