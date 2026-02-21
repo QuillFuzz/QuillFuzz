@@ -49,6 +49,13 @@ def assemble_qiskit(files, output_path, unique_index=0):
             # Second pass: process nodes and imports
             for node in tree.body:
                 if isinstance(node, (ast.Import, ast.ImportFrom)):
+                    # If it's an import from qiskit, ensure we have the required classes
+                    if isinstance(node, ast.ImportFrom) and node.module == 'qiskit':
+                        existing_names = {alias.name for alias in node.names}
+                        for required in ['QuantumCircuit', 'QuantumRegister', 'ClassicalRegister']:
+                            if required not in existing_names:
+                                node.names.append(ast.alias(name=required, asname=None))
+                    
                     code_str = ast.unparse(node)
                     if code_str not in seen_imports:
                         seen_imports.add(code_str)

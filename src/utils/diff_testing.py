@@ -485,32 +485,38 @@ class qiskitTesting(Base):
         '''
         Runs circuit on qiskit simulator and returns counts
         '''
+        ks_value = 1.0
+        try:
+            from qiskit_aer import AerSimulator
+            backend = AerSimulator()
+            
+            # Get original circuit shots
+            circuit.measure_all()
+            uncompiled_circ = transpile(circuit, backend, optimization_level=0)
+            counts1 = self.preprocess_counts(backend.run(uncompiled_circ, shots=10000).result().get_counts())
 
-        from qiskit_aer import AerSimulator
-        backend = AerSimulator()
-        
-        # Get original circuit shots
-        circuit.measure_all()
-        uncompiled_circ = transpile(circuit, backend, optimization_level=0)
-        counts1 = self.preprocess_counts(backend.run(uncompiled_circ, shots=10000).result().get_counts())
+            # Compile circuit at 3 different optimisation levels
+            for i in range(3):
+                compiled_circ = transpile(circuit, backend, optimization_level=i+1)
+                counts2 = self.preprocess_counts(backend.run(compiled_circ, shots=10000).result().get_counts())
 
-        # Compile circuit at 3 different optimisation levels
-        for i in range(3):
-            compiled_circ = transpile(circuit, backend, optimization_level=i+1)
-            counts2 = self.preprocess_counts(backend.run(compiled_circ, shots=10000).result().get_counts())
+                # Run the kstest on the two results
+                ks_value = self.ks_test(counts1, counts2, 10000)
+                print(f"Optimisation level {i+1} ks-test p-value: {ks_value}")
 
-            # Run the kstest on the two results
-            ks_value = self.ks_test(counts1, counts2, 10000)
-            print(f"Optimisation level {i+1} ks-test p-value: {ks_value}")
+                if ks_value < 0.05:
+                    print(f"Interesting circuit found: {circuit_number}")
+                    self.save_interesting_circuit(circuit_number)
 
-            if ks_value < 0.05:
-                print(f"Interesting circuit found: {circuit_number}")
-                self.save_interesting_circuit(circuit_number)
+                # plot results
+                if self.plot:
+                    self.plot_histogram(counts1, "Uncompiled Circuit Results", 0, circuit_number)
+                    self.plot_histogram(counts2, "Compiled Circuit Results", i+1, circuit_number)
 
-            # plot results
-            if self.plot:
-                self.plot_histogram(counts1, "Uncompiled Circuit Results", 0, circuit_number)
-                self.plot_histogram(counts2, "Compiled Circuit Results", i+1, circuit_number)
+        except Exception as e:
+            print("Error during qiskit differential testing:", e)
+            print("Exception :", traceback.format_exc())
+            self.save_interesting_circuit(circuit_number)
 
         return ks_value
         

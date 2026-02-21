@@ -322,6 +322,59 @@ class QiskitMainTransformer(ast.NodeTransformer):
                 
             # Check for QuantumCircuit
             if 'QuantumCircuit' in func_name:
+                # If QuantumCircuit is called with integers, update max_qubits and max_clbits
+                for i, arg in enumerate(node.value.args):
+                    size = None
+                    is_qubit = (i == 0)
+                    is_clbit = (i == 1)
+                    
+                    if isinstance(arg, ast.Constant) and isinstance(arg.value, int):
+                        size = arg.value
+                    elif isinstance(arg, ast.Num):
+                        size = arg.n
+                    elif isinstance(arg, ast.Call):
+                        arg_func_name = self._get_func_name(arg.func)
+                        if 'QuantumRegister' in arg_func_name:
+                            size = self._get_size_from_args(arg)
+                            is_qubit = True
+                            is_clbit = False
+                        elif 'ClassicalRegister' in arg_func_name:
+                            size = self._get_size_from_args(arg)
+                            is_qubit = False
+                            is_clbit = True
+                            
+                    if size is not None:
+                        if is_qubit and size > self.max_qubits:
+                            self.max_qubits = size
+                        elif is_clbit and size > self.max_clbits:
+                            self.max_clbits = size
+
+                for kw in node.value.keywords:
+                    size = None
+                    is_qubit = (kw.arg == 'qubits')
+                    is_clbit = (kw.arg == 'clbits')
+                    
+                    if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, int):
+                        size = kw.value.value
+                    elif isinstance(kw.value, ast.Num):
+                        size = kw.value.n
+                    elif isinstance(kw.value, ast.Call):
+                        arg_func_name = self._get_func_name(kw.value.func)
+                        if 'QuantumRegister' in arg_func_name:
+                            size = self._get_size_from_args(kw.value)
+                            is_qubit = True
+                            is_clbit = False
+                        elif 'ClassicalRegister' in arg_func_name:
+                            size = self._get_size_from_args(kw.value)
+                            is_qubit = False
+                            is_clbit = True
+                            
+                    if size is not None:
+                        if is_qubit and size > self.max_qubits:
+                            self.max_qubits = size
+                        elif is_clbit and size > self.max_clbits:
+                            self.max_clbits = size
+
                 # Replace with: target = qc
                 return ast.Assign(targets=node.targets, value=ast.Name(id='qc', ctx=ast.Load()))
         
