@@ -605,8 +605,6 @@ class guppyTesting(Base):
 
         # Select a random pass
         pass_name = random.choice(["redundant_cx", "squash_rz", "normalize"])
-        sys.stderr.write(f"DEBUG: Applying pass: {pass_name}\n")
-        sys.stderr.flush()
         print(f"Applying pass: {pass_name}")
         
         try:
@@ -636,11 +634,11 @@ class guppyTesting(Base):
             raw_counts_opt = results_opt.collated_counts()
             
             ## Debug prints
-            print(f"DEBUG: Circuit {circuit_number} (Opt) Raw counts: {raw_counts_opt}")
+            # print(f"DEBUG: Circuit {circuit_number} (Opt) Raw counts: {raw_counts_opt}")
 
             counts_opt = Counter({''.join([str(measurement[1]) for measurement in key]): value for key, value in raw_counts_opt.items()})
             
-            print(f"DEBUG: Circuit {circuit_number} (Opt) Processed strings: {counts_opt}")
+            # print(f"DEBUG: Circuit {circuit_number} (Opt) Processed strings: {counts_opt}")
 
             counts_opt = self.preprocess_counts(counts_opt)
             

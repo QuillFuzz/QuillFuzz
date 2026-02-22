@@ -137,12 +137,13 @@ class ProgramProcessor:
     def fix_loop(self, code, initial_error):
         current_code = code
         current_error = initial_error
+        last_failure_type = "compile_fail"
         
         for cycle in range(self.config.n_fixing_cycles):
             prompt_path = os.path.join(self.config.prompt_dir, "fixing_prompt_template.txt")
             if not os.path.exists(prompt_path):
                 self.log(f"Fixing prompt missing at {prompt_path}\n")
-                return None
+                return current_code, last_failure_type
 
             prompt = get_dynamic_prompt(prompt_path, faulty_code=current_code, error_message=current_error)
             
@@ -158,6 +159,8 @@ class ProgramProcessor:
             if not fixed_code:
                 self.log(f"Fixing cycle {cycle+1} failed for {self.filename}: {err}\n")
                 break
+
+            current_code = fixed_code
             
             self.stats.update(stats)
             self.log(f"{self.filename} Fixing (Cycle {cycle+1}) Cost: ${stats.get('cost', 0.0):.6f} | "
@@ -168,8 +171,8 @@ class ProgramProcessor:
             
             if not compile_ok:
                 self.log(f"Fixed {self.filename} (Cycle {cycle+1}) Compilation Failed.\n")
-                current_code = fixed_code
                 current_error = compile_err
+                last_failure_type = "compile_fail"
                 continue
 
             self.log(f"Fixed {self.filename} (Cycle {cycle+1}) compiled successfully.\n")
@@ -178,17 +181,24 @@ class ProgramProcessor:
             if not self.config.compile_only:
                 run_ok, run_err = self.run_check(fixed_code)
                 if run_ok:
-                    return fixed_code
+                    return fixed_code, "success"
                 else:
-                    return fixed_code
+                    current_error = run_err
+                    last_failure_type = "runtime_fail"
+                    continue
             else:
-                return fixed_code
+                return fixed_code, "success"
 
-        return None
+        return current_code, last_failure_type
 
     def process(self, generated_dir, failed_dir, prompt_filename="generation_prompt.txt", compile_only=False):
         self.config.compile_only = compile_only # augment config temporarily
         self.config.current_generated_dir = generated_dir
+
+        compile_fail_dir = os.path.join(failed_dir, "compile_fail")
+        runtime_fail_dir = os.path.join(failed_dir, "runtime_fail")
+        os.makedirs(compile_fail_dir, exist_ok=True)
+        os.makedirs(runtime_fail_dir, exist_ok=True)
         
         code = self.generate(prompt_filename)
         if not code:
@@ -197,24 +207,28 @@ class ProgramProcessor:
         compile_ok, compile_err = self.compile_check(code)
         
         if compile_ok:
+            if not compile_only:
+                run_ok, _ = self.run_check(code)
+                if not run_ok:
+                    save_path = os.path.join(runtime_fail_dir, self.filename)
+                    save_text_to_file(code, save_path)
+                    return None, self.stats, list(set(self.encountered_errors)), False
+
             save_path = os.path.join(generated_dir, self.filename)
             save_text_to_file(code, save_path)
-
-            if not compile_only:
-                self.run_check(code)
-
             return save_path, self.stats, list(set(self.encountered_errors)), False
 
         # If compilation failed, try fixing
-        fixed_code = self.fix_loop(code, compile_err)
+        fixed_code, final_status = self.fix_loop(code, compile_err)
         
-        if fixed_code:
+        if fixed_code and final_status == "success":
             save_path = os.path.join(generated_dir, self.filename)
             save_text_to_file(fixed_code, save_path)
             return save_path, self.stats, list(set(self.encountered_errors)), True
         else:
-            save_path = os.path.join(failed_dir, self.filename)
-            save_text_to_file(code, save_path)
+            failure_dir = runtime_fail_dir if final_status == "runtime_fail" else compile_fail_dir
+            save_path = os.path.join(failure_dir, self.filename)
+            save_text_to_file(fixed_code if fixed_code else code, save_path)
             return None, self.stats, list(set(self.encountered_errors)), True
 
 
