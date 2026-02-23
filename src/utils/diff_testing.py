@@ -66,6 +66,8 @@ class Base():
     OUTPUT_DIR = (pathlib.Path(__file__).parent.parent.parent / "local_saved_circuits").resolve()
     # Define timeout seconds for any compilation
     TIMEOUT_SECONDS = 200
+    # Define threshold for K-S test p-value
+    KS_THRESHOLD = 0.01
 
     def __init__(self):
         super().__init__()
@@ -281,7 +283,7 @@ class pytketTesting(Base):
                 # Heuristic to determine if the testcase is interesting
                 if ks_value < 0.2 :
                     consistency_counter += 1
-                if ks_value < 0.05 or consistency_counter >= 2:
+                if ks_value < self.KS_THRESHOLD or consistency_counter >= 2:
                     is_testcase_interesting = True
                 
                 # plot results
@@ -396,7 +398,7 @@ class pytketTesting(Base):
             print(f"Guppy vs Pytket ks-test p-value: {ks_value}")
 
             # Heuristic to determine if the testcase is interesting
-            if ks_value < 0.05:
+            if ks_value < self.KS_THRESHOLD:
                 print(f"Interesting circuit found: {circuit_number}")
                 self.save_interesting_circuit(circuit_number)
             
@@ -469,7 +471,7 @@ class pytketTesting(Base):
             ks_value = self.ks_test(counts_qir, counts_pytket, 1000)
             print(f"QIR vs Pytket ks-test p-value: {ks_value}")
 
-            if ks_value < 0.05:
+            if ks_value < self.KS_THRESHOLD:
                 print(f"Interesting circuit found: {circuit_number}")
                 self.save_interesting_circuit(circuit_number)
 
@@ -504,7 +506,7 @@ class qiskitTesting(Base):
                 ks_value = self.ks_test(counts1, counts2, 10000)
                 print(f"Optimisation level {i+1} ks-test p-value: {ks_value}")
 
-                if ks_value < 0.05:
+                if ks_value < self.KS_THRESHOLD:
                     print(f"Interesting circuit found: {circuit_number}")
                     self.save_interesting_circuit(circuit_number)
 
@@ -535,7 +537,7 @@ class guppyTesting(Base):
     def __init__(self):
         super().__init__()
 
-    def ks_diff_test(self, circuit : Any, circuit_number : int, n_qubits: int = 20) -> None:
+    def ks_diff_test(self, circuit : Any, circuit_number : int, n_qubits: int = 15) -> None:
         '''
         Compile guppy circuit into hugr and optimise through TKET for differential testing
         '''
@@ -654,7 +656,7 @@ class guppyTesting(Base):
             ks_value = self.ks_test(counts_base, counts_opt, 10)
             print(f"Pass {pass_name} ks-test p-value: {ks_value}")
             
-            if ks_value < 0.05:
+            if ks_value < self.KS_THRESHOLD:
                 print(f"Interesting circuit found (Low KS): {circuit_number}")
                 self.save_interesting_circuit(circuit_number)
                 
@@ -718,7 +720,7 @@ class guppyTesting(Base):
             ks_value = self.ks_test(counts_guppy, counts_qir, 1000)
             print(f"Guppy vs QIR ks-test p-value: {ks_value}")
 
-            if ks_value < 0.05:
+            if ks_value < self.KS_THRESHOLD:
                 print(f"Interesting circuit found: {circuit_number}")
                 self.save_interesting_circuit(circuit_number)
 

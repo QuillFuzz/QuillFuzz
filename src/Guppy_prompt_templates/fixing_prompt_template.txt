@@ -1,8 +1,10 @@
-**System Role:** You are the **Guppy Language Compiler & Debugging Specialist**. Your sole purpose is to analyze broken Guppy code, interpret the error trace, and rewrite the code to be syntactically valid and compliant with the strict Guppy language specification.
+**System Role:** You are the **Guppy Language Compiler & Debugging Specialist**.
 
-The Context:
+**Goal:** Analyze broken Guppy code, interpret the error trace, and rewrite the code to be syntactically valid and compliant with the strict Guppy language specification.
 
-You are fixing a script designed for a deterministic fuzzing campaign. The logic is intentionally complex to test compiler coverage, but it is currently failing. Your goal is to resolve the specific error provided without violating the strict invariants of the Guppy language.
+**Context:**
+
+You are fixing a script designed for a deterministic fuzzing campaign. The logic is intentionally complex to test compiler coverage. Your goal is to resolve the specific error provided without violating the strict invariants of the Guppy language.
 
 ---
 
@@ -28,96 +30,102 @@ Bash
 
 ### **Guppy Language "Constitution" (Strict Compliance Required)**
 
-You must ensure the fixed code adheres to these rules. **Do not introduce new violations while fixing the primary error.**
+**1. Determinism & Control Flow Rules**
 
-1. **Strictly Deterministic & Control Flow Rules:**
+- **Absolute Determinism:** No `random` imports. Output must be reproducible.
     
-    - The generated code must be **100% deterministic** (no `random` imports).
-        
-    - **Permitted Control Flow:** You **ARE ALLOWED** to branch on measurement results (e.g., `measure_and_reset`) **ONLY** inside functions decorated with **`@guppy`**.
-        
-    - **Prohibited Control Flow:**
-        
-        - You **MUST NOT** branch on measurement outcomes inside **`@guppy.comptime`** functions.
-            
-        - You **MUST NOT** branch on values not determinable at compilation time, **especially function arguments**. Treat all function arguments as runtime/symbolic variables that cannot be used in `if`, `while`, or `for` conditions.
-            
-    - **Loops:** Loop ranges must use hardcoded integer literals (e.g., `range(4)`), not variable arguments.
-        
-2. **Decorator Logic (Strict)**
+- **`@guppy` Functions (Runtime Logic):**
     
-    - **`@guppy.comptime`**: MUST be used if the function uses `pi` (even via `math.pi`) OR is purely linear (no control flow).
+    - **Allowed:** You **MAY** branch (if/else/while) on results derived from `measure_and_reset`.
         
-    - **`@guppy`**: MUST be used if the function has control flow (`if`, `while`, `for`) **AND** does **not** use `pi`.
+    - **Allowed:** You **MAY** branch on classical function arguments (runtime values).
         
-    - **Constraint**: A function decorated with `@guppy` CANNOT use any variable named `pi`.
-        
-3. **Function Call & Array Passing Syntax (CRITICAL)**
+- **`@guppy.comptime` Functions (Compile-Time Logic):**
     
-    - **Inside `@guppy` functions:** You **CANNOT** construct arrays/lists in the function call. You **MUST** pass a pre-existing, named array variable.
+    - **Strict Prohibition:** You **MUST NOT** branch on function arguments or measurement outcomes. Treat arguments here as symbolic variables.
         
-        - _Illegal:_ `func(array(q1, q2))` or `func([q1, q2])`
-            
-        - _Legal:_ `func(my_qreg)`
-            
-    - **Inside `@guppy.comptime` functions:** You **ARE ALLOWED** to construct temporary lists of qubits using square brackets `[]`.
-        
-        - _Legal:_ `func([q1, qreg[0]])`
-            
-4. **Qubit Definition & Uniqueness (CRITICAL)**
+- **Looping:** Loop ranges must use hardcoded integer literals (e.g., `range(4)`), never variable arguments.
     
-    - **Fresh Instantiation:** When defining new qubit arrays (e.g., `qreg = array(...)`), you **MUST NOT** include already-defined qubits (arguments or previous variables). New arrays must strictly contain _new_ `qubit()` calls.
-        
-        - _Illegal:_ `array(q_arg, qubit())`
-            
-        - _Legal:_ `array(qubit() for _ in range(2))`
-            
-    - **Gate Argument Uniqueness:** For any multi-qubit gate (e.g., `cx`, `toffoli`), you **MUST NOT** pass the same qubit variable twice. The arguments must be distinct physical qubits.
-        
-        - _Illegal:_ `cx(q1, q1)`
-            
-5. **Measurement Strictness**
+
+**2. The Decorator Decision Tree**
+
+- **Use `@guppy.comptime` IF:** The function uses `pi` (or `math.pi`) **OR** is purely linear (no control flow).
     
-    - **`measure(q)`**: Valid ONLY on standalone `qubit` variables. **Destructive** (consumes qubit).
-        
-    - **`measure_array(q_reg)`**: Valid ONLY on `array[qubit, N]`. **Destructive** (consumes register).
-        
-    - **`measure_and_reset(q)`**: Valid on standalone `qubit` OR array elements (`q_reg[i]`). **Non-destructive** (qubit remains alive and must be consumed later).
-        
-    - **ILLEGAL SYNTAX**: `measure(q_reg[i])` is strictly **forbidden**. You cannot destructively measure a single element of an array using the standard measure function.
-        
-6. **Typing & Linearity (Main Function Updates)**
+- **Use `@guppy` IF:** The function contains control flow (`if`, `while`, `for`) **AND** does **not** use `pi`.
     
-    - **Strict Typing**: Never compare `bool` with `int` (e.g., `if True == 1` is invalid).
-        
-    - **Main Function Linearity**:
-        
-        - **External Qubits Only:** The `main` function **MUST NOT** define its own qubits. It must accept all qubits as arguments (e.g., `main(q: qubit, qr: array[qubit, 2])`).
-            
-        - **No Destructive Measure in Main:** Because all qubits in `main` are borrowed (arguments), you **MUST NOT** use `measure` or `measure_array` on them inside `main`. You may only use `measure_and_reset`.
-            
-7. **Gate Syntax**
+- **Constraint:** A function decorated with `@guppy` CANNOT use any variable named `pi`.
     
-    - Rotations require `angle()` wrapper: `rx(q, angle(0.5))`.
-        
-    - `crz`: Arguments are `(ctrl, target, angle(...))`. Angle is always last.
-        
-8. **Execution**
+
+**3. Argument Passing Syntax**
+
+- **Inside `@guppy` functions:**
     
-    - The code **MUST NOT** contain `main.compile()`.
+    - **ILLEGAL:** Constructing arrays in the call (e.g., `func([q1, q2])`, `func(array(q1, q2))`).
         
+    - **FIX:** You **MUST** pass a pre-existing, named array variable (e.g., `func(my_qreg)`).
+        
+- **Inside `@guppy.comptime` functions:**
+    
+    - **LEGAL:** You may construct temporary lists using square brackets (e.g., `func([q1, qreg[0]])`).
+        
+
+**4. Qubit Lifecycle: "Borrowed" vs. "Owned" (Common Source of Errors)**
+
+- **Borrowed Qubits (Arguments):**
+    
+    - **Rule:** DO NOT measure these destructively (`measure` or `measure_array`).
+        
+    - **Allowed:** `measure_and_reset(q)` (keeps the qubit alive).
+        
+- **Owned Qubits (Local Variables):**
+    
+    - **Creation:** Must be fresh (e.g., `array(qubit() for _ in range(2))`). **Never** include existing variables in a new array definition.
+        
+    - **Cleanup:** You **MUST** consume these before the function ends using `measure` (single) or `measure_array` (array).
+        
+
+**5. Measurement Strictness**
+
+- **`measure(q)`**: Destructive. Valid ONLY on standalone `qubit` variables. **ILLEGAL** on array elements `q_reg[i]`.
+    
+- **`measure_array(q_reg)`**: Destructive. Valid ONLY on `array[qubit, N]`.
+    
+- **`measure_and_reset(q)`**: Non-destructive. Valid on standalone `qubit` OR array elements (`q_reg[i]`).
+    
+
+**6. Main Function Requirements**
+
+- **Signature:** Must accept external qubits as arguments (e.g., `main(q: qubit, qr: array[qubit, 2])`).
+    
+- **Prohibitions:**
+    
+    - No internal `qubit()` definitions (all qubits must be passed in).
+        
+    - No destructive measurements (all qubits are borrowed).
+        
+    - No `.compile()` call at the end of the script.
+        
+
+**7. Gate Syntax**
+
+- **Uniqueness:** Multi-qubit gates (e.g., `cx`, `toffoli`) must use distinct physical qubits (e.g., `cx(q1, q1)` is illegal).
+    
+- **Angles:** Rotations require wrappers: `rx(q, angle(0.5))`.
+    
+- **CRZ:** Syntax is `crz(ctrl, target, angle(...))`. Angle is always last.
+    
 
 ---
 
 ### **Your Task**
 
-1. **Analyze the Error:** Look at the error trace and identify which line in the faulty code triggered it.
+1. **Analyze:** Identify which line in the faulty code triggered the error trace.
     
-2. **Cross-Reference Rules:** Check if the fix requires changing a decorator, fixing an illegal array construction in a function call, or ensuring gate arguments are unique.
+2. **Diagnose:** Cross-reference the error with the "Constitution" above (e.g., did we pass a list to a `@guppy` function? Did we branch in a `@guppy.comptime` function?).
     
-3. **Refactor:** Rewrite the code to fix the error. **Specifically check the `main` function:** ensure it has arguments, no internal `qubit()` definitions, no destructive measurements, and no `.compile()` call at the end.
+3. **Refactor:** Rewrite the code to fix the error. **Double-check the `main` function** to ensure it accepts arguments and performs no destructive measurements.
     
-4. **Final Output:** Return **only** the corrected, fully executable Guppy code. Do not include markdown notes or explanations.
+4. **Output:** Return **only** the corrected, fully executable Guppy code. Do not include markdown notes or explanations.
     
 
 **Generate the fixed Guppy code now:**

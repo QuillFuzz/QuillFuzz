@@ -6,6 +6,7 @@ def assemble_qiskit(files, output_path, unique_index=0):
     all_imports = []
     renamed_bodies = []
     main_calls = []
+    main_resource_reqs = []
 
     # Add required import for diff testing
     diff_test_import = ast.ImportFrom(
@@ -38,6 +39,7 @@ def assemble_qiskit(files, output_path, unique_index=0):
             # Update global max requirements
             global_max_qubits = max(global_max_qubits, transformer.max_qubits)
             global_max_clbits = max(global_max_clbits, transformer.max_clbits)
+            main_resource_reqs.append((transformer.max_qubits, transformer.max_clbits))
             
             # First pass: collect global function names
             for node in tree.body:
@@ -84,13 +86,30 @@ def assemble_qiskit(files, output_path, unique_index=0):
             renamed_bodies.extend(new_nodes)
             
             # Store the call to the renamed main function
+            req_qubits, req_clbits = main_resource_reqs[-1]
             main_calls.append(ast.Expr(
                 value=ast.Call(
                     func=ast.Name(id=f"{prefix}main", ctx=ast.Load()),
                     args=[
                         ast.Name(id='qc', ctx=ast.Load()),
-                        ast.Name(id='qr', ctx=ast.Load()),
-                        ast.Name(id='cr', ctx=ast.Load())
+                        ast.Subscript(
+                            value=ast.Name(id='qr', ctx=ast.Load()),
+                            slice=ast.Slice(
+                                lower=None,
+                                upper=ast.Constant(value=max(1, req_qubits)),
+                                step=None,
+                            ),
+                            ctx=ast.Load(),
+                        ),
+                        ast.Subscript(
+                            value=ast.Name(id='cr', ctx=ast.Load()),
+                            slice=ast.Slice(
+                                lower=None,
+                                upper=ast.Constant(value=max(1, req_clbits)),
+                                step=None,
+                            ),
+                            ctx=ast.Load(),
+                        )
                     ],
                     keywords=[]
                 )

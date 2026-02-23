@@ -14,7 +14,7 @@ from .ast_ops import (
     get_code_complexity_metrics
 )
 
-def _execute_python_code(program_code: str, timeout: int = 30, language: str = 'guppy', coverage_source: str = None, source_file_path: str = None):
+def _execute_python_code(program_code: str, timeout: int = 300, language: str = 'guppy', coverage_source: str = None, source_file_path: str = None):
     """
     Internal helper to execute prepared Python code with coverage and metrics tracking.
     """
@@ -243,7 +243,7 @@ def run_coverage_on_file(file_path: str, source_package: str = None, verbose: bo
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=300,
                 env=env
             )
             # If the process failed, capture stderr.

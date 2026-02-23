@@ -283,12 +283,10 @@ class QiskitMainTransformer(ast.NodeTransformer):
             self.in_main = True
             
             # Add args: qc, qr, cr
-            new_args = [
-                ast.arg(arg='qc', annotation=None),
-                ast.arg(arg='qr', annotation=None),
-                ast.arg(arg='cr', annotation=None)
-            ]
-            node.args.args.extend(new_args)
+            existing_args = {arg.arg for arg in node.args.args}
+            for arg_name in ['qc', 'qr', 'cr']:
+                if arg_name not in existing_args:
+                    node.args.args.append(ast.arg(arg=arg_name, annotation=None))
             
             # Process body
             self.generic_visit(node)
@@ -296,6 +294,19 @@ class QiskitMainTransformer(ast.NodeTransformer):
             self.in_main = False
             return node
         return node
+
+    def visit_Subscript(self, node):
+        if self.in_main and isinstance(node.value, ast.Name):
+            container = node.value.id
+            if container in {'qr', 'cr'}:
+                required_size = self._get_required_size_from_subscript(node.slice)
+                if required_size is not None:
+                    if container == 'qr':
+                        self.max_qubits = max(self.max_qubits, required_size)
+                    else:
+                        self.max_clbits = max(self.max_clbits, required_size)
+
+        return self.generic_visit(node)
 
     def visit_Assign(self, node):
         if not self.in_main:
@@ -395,5 +406,31 @@ class QiskitMainTransformer(ast.NodeTransformer):
             elif isinstance(arg0, ast.Num): # python <3.8
                 return arg0.n
         return 1
+
+    def _extract_int(self, node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, int):
+            return node.value
+        if isinstance(node, ast.Num):
+            return node.n
+        return None
+
+    def _get_required_size_from_subscript(self, slice_node):
+        if isinstance(slice_node, ast.Slice):
+            upper = self._extract_int(slice_node.upper)
+            lower = self._extract_int(slice_node.lower)
+
+            if upper is not None:
+                return upper
+            if lower is not None:
+                return lower + 1
+            return None
+
+        idx = self._extract_int(slice_node)
+        if idx is None:
+            return None
+
+        if idx >= 0:
+            return idx + 1
+        return None
 
 

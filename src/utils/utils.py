@@ -87,31 +87,45 @@ def parse_summary_log_file(file_path):
 
 def strip_markdown_syntax(code: str) -> str:
     """
-    Remove markdown code block syntax from generated code.
-    Strips leading ```python or ``` and trailing ```.
+    Extract Python code from markdown-like LLM responses.
+
+    Behavior:
+    - If one or more fenced Python blocks exist (```python, ```py, ```python3, ...),
+      return only their contents (concatenated with blank lines).
+    - Otherwise, preserve backwards compatibility by stripping a single outer fence
+      if present, or returning the input stripped.
     
     Args:
-        code: The code string potentially wrapped in markdown syntax
+        code: The text potentially containing markdown and explanations
         
     Returns:
-        Clean code without markdown syntax
+        Clean Python code content
     """
-    code = code.strip()
-    
-    # Remove leading markdown syntax (```python, ```py, ``` etc.)
-    if code.startswith("```"):
-        # Remove the line with opening ```
-        lines = code.split('\n')
-        lines = lines[1:]  # Skip first line with ```
-        code = '\n'.join(lines)
-    
-    # Remove trailing markdown syntax (```)
-    if code.endswith("```"):
-        lines = code.split('\n')
-        lines = lines[:-1]  # Skip last line with ```
-        code = '\n'.join(lines)
-    
-    return code.strip()
+    if not code:
+        return ""
+
+    text = code.strip()
+    fence_pattern = re.compile(r"```\s*([^\n`]*)\n(.*?)```", re.DOTALL)
+
+    python_blocks = []
+    for match in fence_pattern.finditer(text):
+        language = match.group(1).strip().lower()
+        block_content = match.group(2).strip()
+
+        if language in {"python", "py"} or language.startswith("python"):
+            python_blocks.append(block_content)
+
+    if python_blocks:
+        return "\n\n".join(python_blocks).strip()
+
+    # Backwards-compatible fallback: strip one outer fence if content is a single
+    # fenced block without specific language filtering.
+    if text.startswith("```") and text.endswith("```"):
+        lines = text.split('\n')
+        if len(lines) >= 2:
+            return '\n'.join(lines[1:-1]).strip()
+
+    return text
 
 def save_text_to_file(text, file_path, verbose=True):
     """
