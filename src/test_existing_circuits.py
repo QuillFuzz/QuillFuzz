@@ -32,9 +32,9 @@ def process_single_file(file_path, logfile, log_lock, verbose=False, language="g
             return False, {}
 
         if compile_only:
-            run_error, run_stdout, metrics, wrapped_code = compile_generated_program(code, timeout=120, language=language, source_file_path=file_path)
+            run_error, run_stdout, metrics, wrapped_code = compile_generated_program(code, language=language, source_file_path=file_path)
         else:
-            run_error, run_stdout, metrics, wrapped_code = run_generated_program(code, timeout=120, language=language, source_file_path=file_path)
+            run_error, run_stdout, metrics, wrapped_code = run_generated_program(code, language=language, source_file_path=file_path)
 
         output_buffer.append(f"{filename} Metrics: {metrics}\n")
         

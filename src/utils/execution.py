@@ -14,7 +14,12 @@ from .ast_ops import (
     get_code_complexity_metrics
 )
 
-def _execute_python_code(program_code: str, timeout: int = 300, language: str = 'guppy', coverage_source: str = None, source_file_path: str = None):
+# Default timeouts in seconds
+DEFAULT_EXECUTION_TIMEOUT = 300
+DEFAULT_COMPILE_TIMEOUT = 30
+DEFAULT_REPORT_TIMEOUT = 10
+
+def _execute_python_code(program_code: str, timeout: int = DEFAULT_EXECUTION_TIMEOUT, language: str = 'guppy', coverage_source: str = None, source_file_path: str = None):
     """
     Internal helper to execute prepared Python code with coverage and metrics tracking.
     """
@@ -90,7 +95,7 @@ def _execute_python_code(program_code: str, timeout: int = 300, language: str = 
                         [sys.executable, "-m", "coverage", "json", "-o", json_report_file],
                         capture_output=True,
                         text=True,
-                        timeout=10,
+                        timeout=DEFAULT_REPORT_TIMEOUT,
                         env=env
                     )
                     
@@ -139,7 +144,7 @@ def _execute_python_code(program_code: str, timeout: int = 300, language: str = 
     except Exception as e:
         return f"ERROR: Failed to execute program: {str(e)}", "", {}
 
-def compile_generated_program(program_code: str, timeout: int = 30, language: str = 'guppy', coverage_source: str = None, source_file_path: str = None):
+def compile_generated_program(program_code: str, timeout: int = DEFAULT_COMPILE_TIMEOUT, language: str = 'guppy', coverage_source: str = None, source_file_path: str = None):
     """
     Compiles (or checks syntax/imports) of generated Python program.
     Does NOT run full tests, just verifies valid compilation/construction.
@@ -160,7 +165,7 @@ def compile_generated_program(program_code: str, timeout: int = 30, language: st
     error, stdout, metrics = _execute_python_code(wrapped_code, timeout, language, coverage_source, source_file_path)
     return error, stdout, metrics, wrapped_code
 
-def run_generated_program(program_code: str, timeout: int = 30, language: str = 'guppy', coverage_source: str = None, source_file_path: str = None, circuit_id: int = 0):
+def run_generated_program(program_code: str, timeout: int = DEFAULT_EXECUTION_TIMEOUT, language: str = 'guppy', coverage_source: str = None, source_file_path: str = None, circuit_id: int = 0):
     """
     Execute generated Python program with full test harness (KS diff test).
     
@@ -181,7 +186,7 @@ def run_generated_program(program_code: str, timeout: int = 30, language: str = 
     return error, stdout, metrics, wrapped_code
 
 
-def run_coverage_on_file(file_path: str, source_package: str = None, verbose: bool = False, python_executable=sys.executable, language: str = 'guppy'):
+def run_coverage_on_file(file_path: str, source_package: str = None, verbose: bool = False, timeout: int = DEFAULT_EXECUTION_TIMEOUT, python_executable=sys.executable, language: str = 'guppy'):
     """
     Run a single python file with coverage tracking.
     Returns the coverage percentage, any error message, coverage data, and verbose report.
@@ -243,7 +248,7 @@ def run_coverage_on_file(file_path: str, source_package: str = None, verbose: bo
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=300,
+                timeout=timeout,
                 env=env
             )
             # If the process failed, capture stderr.
@@ -268,7 +273,7 @@ def run_coverage_on_file(file_path: str, source_package: str = None, verbose: bo
                     [python_executable, "-m", "coverage", "json", "-o", json_report_file],
                     capture_output=True,
                     text=True,
-                    timeout=10,
+                    timeout=DEFAULT_REPORT_TIMEOUT,
                     env=env
                 )
                 
@@ -284,7 +289,7 @@ def run_coverage_on_file(file_path: str, source_package: str = None, verbose: bo
                         [python_executable, "-m", "coverage", "report"],
                         capture_output=True,
                         text=True,
-                        timeout=10,
+                        timeout=DEFAULT_REPORT_TIMEOUT,
                         env=env
                     )
                     verbose_report = report_res.stdout
