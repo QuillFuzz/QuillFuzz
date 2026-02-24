@@ -116,7 +116,7 @@ def _execute_python_code(program_code: str, timeout: int = DEFAULT_EXECUTION_TIM
             # ---------------------------------------------------- #
             # ------------ Heuristic Quality Score --------------- #
             # ---------------------------------------------------- #
-            metrics["quality_score"] = cov + (depth * 2.0) + (w_time * 2.0) 
+            metrics["quality_score"] = cov + (w_time * 2.0) 
 
             # Return error (if any)
             if result.returncode != 0:
