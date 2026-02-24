@@ -16,8 +16,8 @@ from .ast_ops import (
 
 # Default timeouts in seconds
 DEFAULT_EXECUTION_TIMEOUT = 300
-DEFAULT_COMPILE_TIMEOUT = 30
-DEFAULT_REPORT_TIMEOUT = 10
+DEFAULT_COMPILE_TIMEOUT = 60
+DEFAULT_REPORT_TIMEOUT = 60
 
 def _execute_python_code(program_code: str, timeout: int = DEFAULT_EXECUTION_TIMEOUT, language: str = 'guppy', coverage_source: str = None, source_file_path: str = None):
     """
