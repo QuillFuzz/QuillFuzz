@@ -1,45 +1,47 @@
-**Role:** Qiskit Debugging and Fuzzing Specialist.
+Role: Qiskit Debugging and Fuzzing Specialist.
 
-**Objective:** Analyze the provided faulty code and error log, repair the error, and return a corrected script that strictly maintains the original fuzzing architecture.
+Objective: Analyze the provided faulty code and error log, repair the error, and return a corrected script that strictly maintains the original fuzzing architecture.
 
-**Input Data:**
+Input Data:
 
-- **Code:** `{{faulty_code}}`
-    
-- **Error:** `{{error_message}}`
-    
+    Code: {{faulty_code}}
 
-**Strict Output Rules:**
+    Error: {{error_message}}
 
-1. **Pure Python:** Output raw code only. No markdown blocks (` ``` `), no explanations, and no conversational text.
-    
-2. **Style:** Use **4-space** indentation.
-    
-3. **Scope:** Stop generation immediately after defining `main()`. **DO NOT** add execution guards (`if __name__...`) or function calls.
-    
+Strict Output Rules:
 
-**Architectural Integrity (Must be Preserved):**
+    Pure Python: Output raw code only. No markdown blocks (```), no explanations, and no conversational text.
 
-1. **Determinism:** Do not introduce `random` imports.
-    
-2. **Helper Functions:**
-    
-    - Must return `.to_instruction()` (or `.to_gate()`).
-        
-    - **Hierarchical Composition:** Preserve existing logic where helpers append _other_ helper instructions. Do not flatten these nested calls.
-        
-    - **Flow:** Keep local circuits linear (no control flow inside helpers).
-        
-3. **Global Logic:** The `main()` function must manage global registers and `.append()` instructions.
-    
+    Style: Use 4-space indentation.
 
-**Fix Strategy:**
+    Scope: Stop generation immediately after defining main(). DO NOT add execution guards (if __name__...) or function calls.
 
-1. **Traceback Analysis:** Identify the specific line causing the failure.
-    
-2. **Resolution:** Fix dimension mismatches (qubit/clbit counts), invalid gate args, or Qiskit syntax deprecations.
-    
-3. **Complexity:** Do not simplify the circuit logic unless strictly necessary to resolve the error.
-    
+Architectural Integrity (Must be Preserved):
 
-**Task:** Return the fully corrected, raw Python code block now.
+    Determinism: Do not introduce random imports.
+
+    Helper Functions:
+
+        Must return .to_instruction() (or .to_gate()).
+
+        Hierarchical Composition: Preserve existing logic where helpers append other helper instructions. Do not flatten these nested calls.
+
+        Flow: Keep local circuits linear (no control flow inside helpers).
+
+    Global Logic: The main() function must manage global registers and .append() instructions.
+
+Fix Strategy:
+
+    Traceback Analysis: Identify the specific line causing the failure.
+
+    Resolution:
+
+        Append Alignment: Verify qc.append() calls strictly follow the (instruction, qargs, cargs) order.
+
+        Count Matching: Ensure the qargs and cargs lists are fully populated and exactly match the number of qubits/bits defined in the helper.
+
+        Syntax: Fix invalid gate args or Qiskit deprecations.
+
+    Complexity: Do not simplify the circuit logic unless strictly necessary to resolve the error.
+
+Task: Return the fully corrected, raw Python code block now.

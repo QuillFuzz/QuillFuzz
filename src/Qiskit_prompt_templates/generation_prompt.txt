@@ -27,7 +27,9 @@
     
     - Initialize the main `QuantumCircuit`.
         
-    - Append helper instructions.
+    - **Appending Helpers:** Use `qc.append(instruction, qargs, cargs)`.
+        
+    - **Argument Integrity:** You **MUST** pass qubit arguments (`qargs`) first, followed by classical bit arguments (`cargs`). Both lists must be populated and explicitly match the exact count of qubits/bits the helper expects.
         
     - **Dynamic Logic:** Use `qc.if_test((clbit, val))` for branching based on measurements. This is **ONLY** allowed in `main()`.
         
