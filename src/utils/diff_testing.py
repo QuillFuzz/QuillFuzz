@@ -537,7 +537,7 @@ class guppyTesting(Base):
     def __init__(self):
         super().__init__()
 
-    def ks_diff_test(self, circuit : Any, circuit_number : int, n_qubits: int = 15) -> None:
+    def ks_diff_test(self, circuit : Any, circuit_number : int, n_qubits: int = 10) -> None:
         '''
         Compile guppy circuit into hugr and optimise through TKET for differential testing
         '''
@@ -581,7 +581,7 @@ class guppyTesting(Base):
         try:
             runner = build(hugr.to_bytes())
             results = QsysResult(
-                runner.run_shots(Quest(), n_qubits=n_qubits, n_shots=10)
+                runner.run_shots(Quest(), n_qubits=n_qubits, n_shots=1000)
             )
             raw_counts = results.collated_counts()
             if not raw_counts:
@@ -631,7 +631,7 @@ class guppyTesting(Base):
             # Run optimized circuit
             runner_opt = build(hugr_opt.to_bytes())
             results_opt = QsysResult(
-                runner_opt.run_shots(Quest(), n_qubits=n_qubits, n_shots=10)
+                runner_opt.run_shots(Quest(), n_qubits=n_qubits, n_shots=1000)
             )
             raw_counts_opt = results_opt.collated_counts()
             
@@ -653,7 +653,7 @@ class guppyTesting(Base):
                  return
             
             # KS Test
-            ks_value = self.ks_test(counts_base, counts_opt, 10)
+            ks_value = self.ks_test(counts_base, counts_opt, 1000)
             print(f"Pass {pass_name} ks-test p-value: {ks_value}")
             
             if ks_value < self.KS_THRESHOLD:
