@@ -15,13 +15,25 @@ def assemble_qiskit(files, output_path, unique_index=0):
         level=0
     )
     all_imports.append(diff_test_import)
+
+    # Always add required qiskit classes used by assembled master main
+    required_qiskit_import = ast.ImportFrom(
+        module='qiskit',
+        names=[
+            ast.alias(name='QuantumCircuit', asname=None),
+            ast.alias(name='QuantumRegister', asname=None),
+            ast.alias(name='ClassicalRegister', asname=None),
+        ],
+        level=0,
+    )
+    all_imports.append(required_qiskit_import)
     
     # Global tracking for max resources
     global_max_qubits = 1
     global_max_clbits = 1
 
     # Track seen imports to avoid duplication
-    seen_imports = set()
+    seen_imports = {ast.unparse(required_qiskit_import)}
 
     for i, file_path in enumerate(files):
         try:

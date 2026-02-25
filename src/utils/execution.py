@@ -108,9 +108,8 @@ def _execute_python_code(program_code: str, timeout: int = DEFAULT_EXECUTION_TIM
                     metrics["coverage_error"] = str(e)
             
             # Calculate combined quality score
-            # Heuristic: maximize coverage, maximize nesting depth (complexity) and wall time (complexity)
+            # Heuristic: maximize coverage and wall time (complexity)
             cov = metrics.get("coverage_percent", 0.0)
-            depth = metrics.get("nesting_depth", 0)
             w_time = metrics.get("wall_time", 0.0)
             
             # ---------------------------------------------------- #
