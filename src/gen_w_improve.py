@@ -5,6 +5,8 @@ import threading
 import concurrent.futures
 import random
 import argparse
+import csv
+import json
 import yaml
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional
@@ -120,7 +122,6 @@ class ProgramProcessor:
         
         # Store execution quality score separately
         self.stats.execution_quality_score = metrics.get('quality_score', 0.0)
-        self.log(f"{self.filename} Metrics: {self.stats.metrics}\n")
 
         if error.strip():
             self.log(f"{self.filename} Runtime Error:\n{error}\n")
@@ -364,6 +365,43 @@ def run_training_phase(model, args, common_run_dir, main_logfile_path):
     return best_prompt
 
 def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_path):
+    def _flatten_metrics(prefix: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
+        flattened = {}
+        for key, value in (metrics or {}).items():
+            col = f"{prefix}_{key}"
+            if isinstance(value, (dict, list)):
+                flattened[col] = json.dumps(value, ensure_ascii=False)
+            else:
+                flattened[col] = value
+        return flattened
+
+    def _append_metrics_csv(csv_path: str, rows: list[Dict[str, Any]]):
+        if not rows:
+            return
+
+        existing_rows = []
+        fieldnames = []
+
+        if os.path.exists(csv_path) and os.path.getsize(csv_path) > 0:
+            with open(csv_path, "r", newline="", encoding="utf-8") as existing_file:
+                reader = csv.DictReader(existing_file)
+                if reader.fieldnames:
+                    fieldnames = list(reader.fieldnames)
+                existing_rows = list(reader)
+
+        for row in rows:
+            for key in row.keys():
+                if key not in fieldnames:
+                    fieldnames.append(key)
+
+        all_rows = existing_rows + rows
+
+        with open(csv_path, "w", newline="", encoding="utf-8") as out_file:
+            writer = csv.DictWriter(out_file, fieldnames=fieldnames, extrasaction="ignore")
+            writer.writeheader()
+            for row in all_rows:
+                writer.writerow({key: row.get(key, "") for key in fieldnames})
+
     logger = Logger(logfile_path)
     start_time = time.time()
     model_run_dir = common_run_dir
@@ -390,6 +428,7 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
 
     successful_files = []
     stats_list = []
+    successful_metrics_rows = []
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_workers) as executor:
         futures = []
@@ -406,8 +445,22 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
                     stats_list.append(stats)
                 if save_path:
                     successful_files.append(save_path)
+                    execution_metrics = stats.metrics.get("execution", {})
+                    compilation_metrics = stats.metrics.get("compilation", {})
+                    successful_metrics_rows.append({
+                        "file": os.path.basename(save_path),
+                        "success": True,
+                        "coverage_percent": execution_metrics.get("coverage_percent", 0.0),
+                        **_flatten_metrics("compilation", compilation_metrics),
+                        **_flatten_metrics("execution", execution_metrics),
+                    })
             except Exception as e:
                 logger.log(f"Error: {e}")
+
+    metrics_csv_path = os.path.join(os.path.dirname(logfile_path), "execution_metrics.csv")
+    _append_metrics_csv(metrics_csv_path, successful_metrics_rows)
+    if successful_metrics_rows:
+        logger.log(f"Saved {len(successful_metrics_rows)} successful run metrics to {metrics_csv_path}")
 
     # Aggregating Stats
     total_time = time.time() - start_time

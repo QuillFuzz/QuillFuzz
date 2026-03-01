@@ -307,84 +307,112 @@ def generate_coverage_text_report(grouped_results, output_file):
 
 def generate_complexity_scatter_plots(all_metrics, output_dir):
     """
-    Generates scatter plots comparing complexity metrics against compilation/execution time.
-    all_metrics: list of dicts with 'model', 'metrics' keys.
+    Generates only the requested complexity plots:
+    - Coverage (%) vs Line Count (2D), colored by function count (blue=low, red=high)
+    - Coverage (%) vs Execution Time (s) vs Compilation Time (s) (3D)
+
+    all_metrics: list of dicts where each entry must include a 'metrics' key.
+    The 'model' key is optional for this function and is currently ignored.
     """
     if not all_metrics:
         return
 
     os.makedirs(output_dir, exist_ok=True)
 
-    # Metrics to plot
-    plot_configs = [
-        ('line_count', 'Line Count', 'Line Count'),
-        ('function_count', 'Function Count', 'Function Count'),
-        ('nesting_depth', 'Nesting Depth', 'Nesting Depth'),
-        ('coverage_percent', 'Coverage (%)', 'Coverage')
+    records = []
+    for entry in all_metrics:
+        metrics_root = entry.get('metrics', {})
+        execution_metrics = metrics_root.get('execution', {})
+        compilation_metrics = metrics_root.get('compilation', {})
+
+        # Legacy fallback where execution metrics may be at root
+        if not execution_metrics and 'wall_time' in metrics_root and 'compilation' not in metrics_root:
+            execution_metrics = metrics_root
+
+        line_count = execution_metrics.get('line_count')
+        function_count = execution_metrics.get('function_count')
+        coverage_percent = execution_metrics.get('coverage_percent')
+        execution_time = execution_metrics.get('wall_time')
+        compilation_time = compilation_metrics.get('wall_time')
+
+        if line_count is None or function_count is None or coverage_percent is None:
+            continue
+
+        records.append({
+            'line_count': line_count,
+            'function_count': function_count,
+            'coverage_percent': coverage_percent,
+            'execution_time': execution_time,
+            'compilation_time': compilation_time,
+        })
+
+    if not records:
+        return
+
+    line_counts = [r['line_count'] for r in records]
+    function_counts = [r['function_count'] for r in records]
+    coverage_vals = [r['coverage_percent'] for r in records]
+
+    # Plot 1: Coverage vs line count (2D) with function-count gradient (blue->red)
+    fig1, ax1 = plt.subplots(figsize=(10, 6))
+    scatter1 = ax1.scatter(
+        line_counts,
+        coverage_vals,
+        c=function_counts,
+        cmap='coolwarm',
+        alpha=0.75,
+        edgecolors='w',
+        s=60,
+    )
+    cbar1 = fig1.colorbar(scatter1, ax=ax1)
+    cbar1.set_label('Number of Distinct Functions (blue=low, red=high)')
+    ax1.set_xlabel('Line Count')
+    ax1.set_ylabel('Coverage (%)')
+    ax1.set_title('Coverage vs Line Count')
+    ax1.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.7)
+    fig1.tight_layout()
+    plot_path1 = os.path.join(output_dir, 'complexity_coverage_vs_line_count.png')
+    plt.savefig(plot_path1, bbox_inches='tight')
+    tqdm.write(f"Saved plot: {plot_path1}")
+    plt.close(fig1)
+
+    # Plot 2: Coverage vs execution time vs compilation time (3D)
+    points_3d = [
+        r for r in records
+        if r['execution_time'] is not None and r['compilation_time'] is not None
     ]
-    
-    # Phases to plot against
-    phases = [
-        ('compilation', 'Compilation Time (s)'),
-        ('execution', 'Execution Time (s)')
-    ]
 
-    # Extract unique models for color coding
-    models = sorted(list(set(m['model'] for m in all_metrics)))
-    colors = plt.cm.tab10(np.linspace(0, 1, len(models)))
-    model_color_map = dict(zip(models, colors))
-    
-    for phase_key, y_label in phases:
-        for metric_key, xlabel, title_prefix in plot_configs:
-            
-            title = f"{title_prefix} vs {y_label.split('(')[0].strip()}"
-            fig, ax = plt.subplots(figsize=(10, 6))
-            
-            has_data = False
-            for model in models:
-                model_data = [m for m in all_metrics if m['model'] == model]
-                
-                x_vals = []
-                y_vals = []
-                
-                for entry in model_data:
-                    metrics_root = entry.get('metrics', {})
-                    # Handle separate compilation/execution metrics
-                    phase_metrics = metrics_root.get(phase_key, {})
-                    
-                    if not phase_metrics:
-                         # Fallback for flat structure if phase not found but metrics present (legacy support attempt)
-                         if phase_key == 'execution' and 'wall_time' in metrics_root and 'compilation' not in metrics_root:
-                             phase_metrics = metrics_root
-                         else:
-                             continue
+    if points_3d:
+        fig3 = plt.figure(figsize=(10, 7))
+        ax3 = fig3.add_subplot(111, projection='3d')
 
-                    if metric_key in phase_metrics and 'wall_time' in phase_metrics:
-                       # Only plot if we have valid data (e.g. coverage > 0 if plotting coverage)
-                       if metric_key == 'coverage_percent' and phase_metrics.get(metric_key, 0) == 0:
-                           continue 
+        x_exec = [r['execution_time'] for r in points_3d]
+        y_comp = [r['compilation_time'] for r in points_3d]
+        z_cov = [r['coverage_percent'] for r in points_3d]
+        fn_colors = [r['function_count'] for r in points_3d]
 
-                       x_vals.append(phase_metrics[metric_key])
-                       y_vals.append(phase_metrics['wall_time'])
-                
-                if x_vals:
-                    ax.scatter(x_vals, y_vals, label=model.split('/')[-1], color=model_color_map[model], alpha=0.6, edgecolors='w', s=50)
-                    has_data = True
-            
-            if has_data:
-                ax.set_xlabel(xlabel)
-                ax.set_ylabel(y_label)
-                ax.set_title(title)
-                ax.legend()
-                ax.grid(True, linestyle='--', alpha=0.6)
-                
-                # Sanitize filename
-                safe_title = title.replace(" ", "_").lower().replace("(", "").replace(")", "").replace("/", "_")
-                plot_path = os.path.join(output_dir, f"complexity_{safe_title}.png")
-                plt.savefig(plot_path, bbox_inches='tight')
-                tqdm.write(f"Saved plot: {plot_path}")
-            
-            plt.close(fig)
+        scatter3 = ax3.scatter(
+            x_exec,
+            y_comp,
+            z_cov,
+            c=fn_colors,
+            cmap='coolwarm',
+            alpha=0.8,
+            s=50,
+        )
+        cbar3 = fig3.colorbar(scatter3, ax=ax3, pad=0.1)
+        cbar3.set_label('Number of Distinct Functions (blue=low, red=high)')
+
+        ax3.set_xlabel('Execution Time (s)')
+        ax3.set_ylabel('Compilation Time (s)')
+        ax3.set_zlabel('Coverage (%)')
+        ax3.set_title('Coverage vs Execution Time vs Compilation Time')
+
+        fig3.tight_layout()
+        plot_path2 = os.path.join(output_dir, 'complexity_coverage_vs_execution_vs_compilation.png')
+        plt.savefig(plot_path2, bbox_inches='tight')
+        tqdm.write(f"Saved plot: {plot_path2}")
+        plt.close(fig3)
 
 def generate_coverage_plot(grouped_results, output_file):
     """
