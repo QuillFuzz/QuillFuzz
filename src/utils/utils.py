@@ -5,86 +5,6 @@ import numpy as np
 from tqdm import tqdm
 import re
 
-def parse_summary_log_file(file_path):
-    """
-    Parses an execution log file to extract performance metrics.
-    Looking for blocks like:
-    
-    ============================================================
-      PERFORMANCE SUMMARY for <model_name>
-    ------------------------------------------------------------
-      Target Number of Programs : <int>
-      ...
-    ------------------------------------------------------------
-      Total Cost (Estimated)   : $<float>
-      ...
-    """
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-    except Exception as e:
-        print(f"  Error reading file {file_path}: {e}")
-        return []
-
-    # Find ALL PERFORMANCE SUMMARY blocks
-    # We look for the model name line followed by the block content
-    # The regex matches "PERFORMANCE SUMMARY for <model>" until the closing separator of 60 '=' or EOF
-    pattern = r'PERFORMANCE SUMMARY for\s+(.+?)\s*\n(.*?)(?=============================================================|\Z)'
-    
-    matches = list(re.finditer(pattern, content, re.DOTALL))
-    
-    if not matches:
-        # Fallback for slightly different separators or end of file if expected separator is missing
-        # This fallback is less safe for multiple blocks but might catch a single tail block
-        pattern_fallback = r'PERFORMANCE SUMMARY for\s+(.+?)\s*\n(.*?)$'
-        matches = list(re.finditer(pattern_fallback, content, re.DOTALL))
-
-    if not matches:
-        return []
-
-    stats_list = []
-
-    for match in matches:
-        model_name = match.group(1).strip()
-        block_content = match.group(2)
-
-        stats = {'model': model_name}
-
-        # Extract metrics using regex
-        # Target Number of Programs : 20
-        total_programs_match = re.search(r'Target Number of Programs\s*:\s*(\d+)', block_content)
-        # Total Valid Programs     : 19
-        valid_programs_match = re.search(r'Total Valid Programs\s*:\s*(\d+)', block_content)
-        # Total Time Taken         : 271.04 seconds
-        total_time_match = re.search(r'Total Time Taken\s*:\s*([\d\.]+)', block_content)
-        # Total Cost (Estimated)   : $2.479694
-        total_cost_match = re.search(r'Total Cost \(Estimated\)\s*:\s*\$([\d\.]+)', block_content)
-
-        if valid_programs_match:
-            stats['valid_programs'] = int(valid_programs_match.group(1))
-        else:
-            # If we can't find valid programs count, this summary block might be malformed
-            continue
-
-        if total_programs_match:
-            stats['total_programs'] = int(total_programs_match.group(1))
-        else:
-            stats['total_programs'] = stats['valid_programs'] 
-
-        if total_time_match:
-            stats['total_time'] = float(total_time_match.group(1))
-        else:
-            stats['total_time'] = 0.0
-        
-        if total_cost_match:
-            stats['total_cost'] = float(total_cost_match.group(1))
-        else:
-            stats['total_cost'] = 0.0
-            
-        stats_list.append(stats)
-
-    return stats_list
-
 def strip_markdown_syntax(code: str) -> str:
     """
     Extract Python code from markdown-like LLM responses.
@@ -376,91 +296,83 @@ def generate_complexity_scatter_plots(all_metrics, output_dir):
     tqdm.write(f"Saved plot: {plot_path1}")
     plt.close(fig1)
 
-    # Plot 2: Coverage vs execution time vs compilation time (3D)
+    # Plot 2-4: Three 2D perspectives for execution/compilation/coverage
     points_3d = [
         r for r in records
         if r['execution_time'] is not None and r['compilation_time'] is not None
     ]
 
     if points_3d:
-        fig3 = plt.figure(figsize=(10, 7))
-        ax3 = fig3.add_subplot(111, projection='3d')
-
         x_exec = [r['execution_time'] for r in points_3d]
         y_comp = [r['compilation_time'] for r in points_3d]
         z_cov = [r['coverage_percent'] for r in points_3d]
         fn_colors = [r['function_count'] for r in points_3d]
 
-        scatter3 = ax3.scatter(
+        # Perspective A: Coverage vs Execution Time
+        fig2a, ax2a = plt.subplots(figsize=(10, 6))
+        scatter2a = ax2a.scatter(
             x_exec,
+            z_cov,
+            c=fn_colors,
+            cmap='coolwarm',
+            alpha=0.8,
+            edgecolors='w',
+            s=60,
+        )
+        cbar2a = fig2a.colorbar(scatter2a, ax=ax2a)
+        cbar2a.set_label('Number of Distinct Functions (blue=low, red=high)')
+        ax2a.set_xlabel('Execution Time (s)')
+        ax2a.set_ylabel('Coverage (%)')
+        ax2a.set_title('Coverage vs Execution Time')
+        ax2a.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.7)
+        fig2a.tight_layout()
+        plot_path2a = os.path.join(output_dir, 'complexity_coverage_vs_execution_time.png')
+        plt.savefig(plot_path2a, bbox_inches='tight')
+        tqdm.write(f"Saved plot: {plot_path2a}")
+        plt.close(fig2a)
+
+        # Perspective B: Coverage vs Compilation Time
+        fig2b, ax2b = plt.subplots(figsize=(10, 6))
+        scatter2b = ax2b.scatter(
             y_comp,
             z_cov,
             c=fn_colors,
             cmap='coolwarm',
             alpha=0.8,
-            s=50,
+            edgecolors='w',
+            s=60,
         )
-        cbar3 = fig3.colorbar(scatter3, ax=ax3, pad=0.1)
-        cbar3.set_label('Number of Distinct Functions (blue=low, red=high)')
+        cbar2b = fig2b.colorbar(scatter2b, ax=ax2b)
+        cbar2b.set_label('Number of Distinct Functions (blue=low, red=high)')
+        ax2b.set_xlabel('Compilation Time (s)')
+        ax2b.set_ylabel('Coverage (%)')
+        ax2b.set_title('Coverage vs Compilation Time')
+        ax2b.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.7)
+        fig2b.tight_layout()
+        plot_path2b = os.path.join(output_dir, 'complexity_coverage_vs_compilation_time.png')
+        plt.savefig(plot_path2b, bbox_inches='tight')
+        tqdm.write(f"Saved plot: {plot_path2b}")
+        plt.close(fig2b)
 
-        ax3.set_xlabel('Execution Time (s)')
-        ax3.set_ylabel('Compilation Time (s)')
-        ax3.set_zlabel('Coverage (%)')
-        ax3.set_title('Coverage vs Execution Time vs Compilation Time')
-
-        fig3.tight_layout()
-        plot_path2 = os.path.join(output_dir, 'complexity_coverage_vs_execution_vs_compilation.png')
-        plt.savefig(plot_path2, bbox_inches='tight')
-        tqdm.write(f"Saved plot: {plot_path2}")
-        plt.close(fig3)
-
-def generate_coverage_plot(grouped_results, output_file):
-    """
-    Generates scatter plots of coverage vs function count.
-    Generates a separate plot file for each group in grouped_results.
-    """
-    groups = sorted(grouped_results.keys())
-    
-    if not groups:
-        tqdm.write("No data to plot.")
-        return
-
-    base_name, ext = os.path.splitext(output_file)
-    if not ext:
-        ext = ".png"
-        
-    for name in groups:
-        files = grouped_results[name]
-        successful_entries = [x for x in files if x.get('success', False)]
-        
-        fig, ax = plt.subplots(figsize=(10, 6))
-        
-        if successful_entries:
-            x_vals = [entry.get('function_count', 0) for entry in successful_entries]
-            y_vals = [entry.get('coverage_percent', 0.0) for entry in successful_entries]
-            
-            if x_vals and y_vals:
-                ax.scatter(x_vals, y_vals, alpha=0.7, edgecolors='w', s=60)
-        
-        ax.set_title(f"Coverage Analysis: {name}")
-        ax.set_xlabel('Number of Distinct Functions')
-        ax.set_ylabel('Coverage (%)')
-        ax.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.7)
-        
-        # Determine filename
-        if len(groups) > 1:
-            # Sanitize group name for filename
-            safe_name = "".join(x for x in name if x.isalnum() or x in ('_', '-'))
-            current_output = f"{base_name}_{safe_name}{ext}"
-        else:
-            current_output = output_file
-            
-        fig.tight_layout()
-        
-        try:
-            plt.savefig(current_output, bbox_inches='tight', dpi=150)
-            tqdm.write(f"Plot saved to {current_output}")
-        except Exception as e:
-            tqdm.write(f"Failed to save plot to {current_output}: {e}")
-            
-        plt.close(fig)
+        # Perspective C: Execution Time vs Compilation Time
+        fig2c, ax2c = plt.subplots(figsize=(10, 6))
+        scatter2c = ax2c.scatter(
+            x_exec,
+            y_comp,
+            c=fn_colors,
+            cmap='coolwarm',
+            alpha=0.8,
+            edgecolors='w',
+            s=60,
+        )
+        cbar2c = fig2c.colorbar(scatter2c, ax=ax2c)
+        cbar2c.set_label('Number of Distinct Functions (blue=low, red=high)')
+        ax2c.set_xlabel('Execution Time (s)')
+        ax2c.set_ylabel('Compilation Time (s)')
+        ax2c.set_title('Execution Time vs Compilation Time')
+        ax2c.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.7)
+        fig2c.tight_layout()
+        plot_path2c = os.path.join(output_dir, 'complexity_execution_vs_compilation_time.png')
+        plt.savefig(plot_path2c, bbox_inches='tight')
+        tqdm.write(f"Saved plot: {plot_path2c}")
+        plt.close(fig2c)
