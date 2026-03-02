@@ -1,15 +1,13 @@
 import os
 import sys
 import time
-import threading
 import concurrent.futures
 import random
 import argparse
-import csv
 import json
 import yaml
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Tuple
 from tqdm import tqdm
 
 # Add project root to path so we can import scripts
@@ -19,6 +17,15 @@ from utils.circuit_assembler import assemble
 from utils.llm_client import ask_any_model, get_dynamic_prompt
 from utils.utils import save_text_to_file, generate_summary_plot, generate_complexity_scatter_plots
 from utils.execution import run_generated_program, compile_generated_program
+from utils.reporting import (
+    Logger,
+    extract_ks_test_results,
+    find_low_ks_values,
+    flatten_metrics_for_csv,
+    append_rows_to_csv,
+    build_error_details,
+    summarize_errors,
+)
 
 @dataclass
 class GenerationStats:
@@ -31,27 +38,14 @@ class GenerationStats:
     metrics: Dict[str, Any] = field(default_factory=lambda: {'compilation': {}, 'execution': {}})
 
     def update(self, stats: Dict[str, Any]):
-        if not stats: return
+        if not stats:
+            return
         self.cost += stats.get('cost', 0.0)
         self.prompt_tokens += stats.get('prompt_tokens', 0)
         self.completion_tokens += stats.get('completion_tokens', 0)
         self.total_tokens += stats.get('total_tokens', 0)
         if 'quality_score' in stats:
             self.quality_score = stats['quality_score']
-
-class Logger:
-    def __init__(self, logfile_path):
-        self.logfile_path = logfile_path
-        self.lock = threading.Lock()
-
-    def log(self, message: str):
-        if not self.logfile_path: return
-        with self.lock:
-            if not message.endswith('\n'):
-                message += '\n'
-            # Check if file is open elsewhere or just append
-            with open(self.logfile_path, "a") as f:
-                f.write(message)
 
 
 class ProgramProcessor:
@@ -99,12 +93,14 @@ class ProgramProcessor:
     def compile_check(self, code):
         self.log(f"--- {self.elapsed} Testing generated {self.filename} ---\n")
         error, _, metrics, wrapped_code = compile_generated_program(code, language=self.config.language)
+        metrics = metrics or {}
         self.stats.metrics['compilation'] = metrics
         
         # Store compiliation quality score as the main quality_score
         if error:
             self.stats.quality_score = 0.0
-            self.log(f"{self.filename} Compilation Failed:\n{error}\n")
+            full_error = metrics.get("error_full") or error
+            self.log(f"{self.filename} Compilation Failed:\n{full_error}\n")
             self.encountered_errors.append(f"Compilation Error:\n{error}")
             if self.config.verbose:
                 self.log(f"--- {self.filename} Code ---\n{wrapped_code}\n-----------------------\n")
@@ -118,13 +114,26 @@ class ProgramProcessor:
         self.log(f"--- {self.elapsed} Running {self.filename} ---\n")
         source_file_path = os.path.join(self.config.current_generated_dir, self.filename) if hasattr(self.config, "current_generated_dir") and self.config.current_generated_dir else None
         error, output, metrics, runtime_code = run_generated_program(code, language=self.config.language, source_file_path=source_file_path, circuit_id=self.index)
+        metrics = metrics or {}
         self.stats.metrics['execution'] = metrics
+
+        ks_results = extract_ks_test_results(output)
+        if ks_results:
+            metrics['ks_test_p_values'] = ks_results
+            low_ks_values = find_low_ks_values(ks_results, self.config.ks_low_threshold)
+            metrics['low_ks_test_levels'] = low_ks_values
+            if low_ks_values:
+                low_text = ", ".join([f"L{level}={value:.6g}" for level, value in low_ks_values])
+                self.log(
+                    f"{self.filename} LOW KS detected (threshold={self.config.ks_low_threshold}): {low_text}"
+                )
         
         # Store execution quality score separately
         self.stats.execution_quality_score = metrics.get('quality_score', 0.0)
 
         if error.strip():
-            self.log(f"{self.filename} Runtime Error:\n{error}\n")
+            full_error = metrics.get("error_full") or error
+            self.log(f"{self.filename} Runtime Error:\n{full_error}\n")
             self.encountered_errors.append(f"Runtime Error:\n{error}")
             if self.config.verbose:
                 self.log(f"--- {self.filename} Code ---\n{runtime_code}\n-----------------------\n")
@@ -365,43 +374,6 @@ def run_training_phase(model, args, common_run_dir, main_logfile_path):
     return best_prompt
 
 def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_path):
-    def _flatten_metrics(prefix: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
-        flattened = {}
-        for key, value in (metrics or {}).items():
-            col = f"{prefix}_{key}"
-            if isinstance(value, (dict, list)):
-                flattened[col] = json.dumps(value, ensure_ascii=False)
-            else:
-                flattened[col] = value
-        return flattened
-
-    def _append_metrics_csv(csv_path: str, rows: list[Dict[str, Any]]):
-        if not rows:
-            return
-
-        existing_rows = []
-        fieldnames = []
-
-        if os.path.exists(csv_path) and os.path.getsize(csv_path) > 0:
-            with open(csv_path, "r", newline="", encoding="utf-8") as existing_file:
-                reader = csv.DictReader(existing_file)
-                if reader.fieldnames:
-                    fieldnames = list(reader.fieldnames)
-                existing_rows = list(reader)
-
-        for row in rows:
-            for key in row.keys():
-                if key not in fieldnames:
-                    fieldnames.append(key)
-
-        all_rows = existing_rows + rows
-
-        with open(csv_path, "w", newline="", encoding="utf-8") as out_file:
-            writer = csv.DictWriter(out_file, fieldnames=fieldnames, extrasaction="ignore")
-            writer.writeheader()
-            for row in all_rows:
-                writer.writerow({key: row.get(key, "") for key in fieldnames})
-
     logger = Logger(logfile_path)
     start_time = time.time()
     model_run_dir = common_run_dir
@@ -428,39 +400,87 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
 
     successful_files = []
     stats_list = []
-    successful_metrics_rows = []
+    metrics_rows = []
+    report_entries = []
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_workers) as executor:
-        futures = []
+        futures = {}
         for i in range(args.n_programs):
             processor = ProgramProcessor(i, model, args, logger, time.time())
-            futures.append(executor.submit(
+            future = executor.submit(
                 processor.process, gen_dir, fail_dir, prompt_filename, False
-            ))
+            )
+            futures[future] = processor.filename
 
         for future in tqdm(concurrent.futures.as_completed(futures), total=args.n_programs, desc=f"Production {model}"):
             try:
-                save_path, stats, _, _ = future.result()
+                save_path, stats, errors, _ = future.result()
+                source_filename = futures[future]
                 if stats:
                     stats_list.append(stats)
+
+                execution_metrics = stats.metrics.get("execution", {}) if stats else {}
+                compilation_metrics = stats.metrics.get("compilation", {}) if stats else {}
+                low_ks_values = execution_metrics.get("low_ks_test_levels", []) if execution_metrics else []
+                error_details = build_error_details([
+                    {
+                        "error": execution_metrics.get("error_summary")
+                        or compilation_metrics.get("error_summary")
+                        or summarize_errors(errors),
+                        "error_full": execution_metrics.get("error_full")
+                        or compilation_metrics.get("error_full")
+                        or "\n\n---\n\n".join(errors),
+                    }
+                ])
+                file_name = os.path.basename(save_path) if save_path else source_filename
+                report_entries.append({
+                    "file": file_name,
+                    "success": bool(save_path),
+                    "coverage_percent": execution_metrics.get("coverage_percent", 0.0) if execution_metrics else 0.0,
+                    "low_ks_test_levels": low_ks_values,
+                    "error": error_details["error"],
+                    "error_full": error_details["error_full"],
+                })
+
+                metrics_rows.append({
+                    "model": model,
+                    "file": file_name,
+                    "success": bool(save_path),
+                    "coverage_percent": execution_metrics.get("coverage_percent", 0.0) if execution_metrics else 0.0,
+                    **flatten_metrics_for_csv("compilation", compilation_metrics),
+                    **flatten_metrics_for_csv("execution", execution_metrics),
+                })
+
                 if save_path:
                     successful_files.append(save_path)
-                    execution_metrics = stats.metrics.get("execution", {})
-                    compilation_metrics = stats.metrics.get("compilation", {})
-                    successful_metrics_rows.append({
-                        "file": os.path.basename(save_path),
-                        "success": True,
-                        "coverage_percent": execution_metrics.get("coverage_percent", 0.0),
-                        **_flatten_metrics("compilation", compilation_metrics),
-                        **_flatten_metrics("execution", execution_metrics),
-                    })
             except Exception as e:
                 logger.log(f"Error: {e}")
+                source_filename = futures[future]
+                error_details = build_error_details([
+                    {
+                        "error": str(e),
+                        "error_full": str(e),
+                    }
+                ])
+                report_entries.append({
+                    "file": source_filename,
+                    "success": False,
+                    "coverage_percent": 0.0,
+                    "low_ks_test_levels": [],
+                    "error": error_details["error"],
+                    "error_full": error_details["error_full"],
+                })
+                metrics_rows.append({
+                    "model": model,
+                    "file": source_filename,
+                    "success": False,
+                    "coverage_percent": 0.0,
+                })
 
     metrics_csv_path = os.path.join(os.path.dirname(logfile_path), "execution_metrics.csv")
-    _append_metrics_csv(metrics_csv_path, successful_metrics_rows)
-    if successful_metrics_rows:
-        logger.log(f"Saved {len(successful_metrics_rows)} successful run metrics to {metrics_csv_path}")
+    append_rows_to_csv(metrics_csv_path, metrics_rows)
+    if metrics_rows:
+        logger.log(f"Saved {len(metrics_rows)} run metrics rows to {metrics_csv_path}")
 
     # Aggregating Stats
     total_time = time.time() - start_time
@@ -472,6 +492,13 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
     total_completion_tokens = sum(s.completion_tokens for s in stats_list)
     total_tokens = sum(s.total_tokens for s in stats_list)
     avg_time_per_valid = total_time / len(successful_files) if successful_files else 0
+    successful_coverages = [
+        float(entry.get("coverage_percent", 0.0) or 0.0)
+        for entry in report_entries
+        if entry.get("success")
+    ]
+    avg_coverage_percent = sum(successful_coverages) / len(successful_coverages) if successful_coverages else 0.0
+    low_ks_file_count = sum(1 for entry in report_entries if entry.get("low_ks_test_levels"))
 
     summary_log = f"""
 ============================================================
@@ -497,15 +524,19 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
         "total_time": total_time,
         "total_programs": args.n_programs,
         "valid_programs": len(successful_files),
+        "failed_programs": max(0, args.n_programs - len(successful_files)),
         "avg_quality_score": avg_quality,
+        "avg_coverage_percent": avg_coverage_percent,
+        "low_ks_file_count": low_ks_file_count,
+        "ks_low_threshold": args.ks_low_threshold,
         "total_prompt_tokens": total_prompt_tokens,
         "total_completion_tokens": total_completion_tokens,
         "total_tokens": total_tokens
     }
-    
+
     metrics = [{'model': model, 'metrics': s.metrics} for s in stats_list if s.metrics]
     
-    return successful_files, summary, metrics
+    return successful_files, summary, metrics, report_entries
 
 def assemble_circuits(model, files, args, base_dir):
     out_dir = os.path.join(base_dir, "assembled")
@@ -559,6 +590,12 @@ def main():
     parser.add_argument("--improver_model", type=str, default="anthropic/claude-sonnet-4-5")
     parser.add_argument("--reasoning_effort", type=str, default="high")
     parser.add_argument("--improve_prompt", action="store_true", default=False, help="Enable prompt improvement stage")
+    parser.add_argument(
+        "--ks_low_threshold",
+        type=float,
+        default=0.05,
+        help="Threshold below which KS-test p-values are flagged as low in production reports.",
+    )
 
     args, _ = parser.parse_known_args()
     if args.config_file:
@@ -593,6 +630,7 @@ def main():
 
     all_stats = []
     all_metrics = []
+    all_reports = []
 
     for model in args.models:
         # Train
@@ -604,9 +642,10 @@ def main():
              best_prompt = "generation_prompt.txt"
         
         # Produce
-        files, summary, metrics = run_production_phase(model, best_prompt, args, common_run_dir, logfile_path)
+        files, summary, metrics, report_entries = run_production_phase(model, best_prompt, args, common_run_dir, logfile_path)
         all_stats.append(summary)
         all_metrics.extend(metrics)
+        all_reports.append({"model": model, "entries": report_entries})
 
         # Assemble
         if files:
@@ -616,6 +655,19 @@ def main():
         generate_summary_plot(all_stats, os.path.join(common_run_dir, "plots", "performance"))
     if all_metrics:
         generate_complexity_scatter_plots(all_metrics, os.path.join(common_run_dir, "plots", "complexity"))
+
+    performance_summary_path = os.path.join(common_run_dir, "performance_summary.json")
+    performance_summary = {
+        "run_id": run_id,
+        "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "language": args.language,
+        "models": args.models,
+        "model_summaries": all_stats,
+        "per_file_reports": all_reports,
+    }
+    with open(performance_summary_path, "w", encoding="utf-8") as f:
+        json.dump(performance_summary, f, indent=2)
+    print(f"Performance summary JSON: {performance_summary_path}")
 
 
 

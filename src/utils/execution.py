@@ -58,11 +58,31 @@ def _safe_remove(path: Optional[str]) -> None:
         pass
 
 
-def _extract_run_error(result: subprocess.CompletedProcess) -> str:
+def _summarize_error_text(error_text: str, fallback: str) -> str:
+    if not error_text:
+        return fallback
+
+    lines = [line.strip() for line in error_text.splitlines() if line and line.strip()]
+    if not lines:
+        return fallback
+
+    return lines[-1]
+
+
+def _extract_run_error(result: subprocess.CompletedProcess) -> Tuple[str, str]:
     stderr = result.stderr or ""
+    full_error = stderr.strip()
+
     if result.returncode != 0:
-        return stderr if stderr else f"Process exited with code {result.returncode}"
-    return stderr
+        fallback = f"Process exited with code {result.returncode}"
+        if not full_error:
+            full_error = fallback
+        return _summarize_error_text(full_error, fallback), full_error
+
+    if full_error:
+        return _summarize_error_text(full_error, ""), full_error
+
+    return "", ""
 
 
 def _load_coverage_percent_from_json(json_report_file: str) -> Tuple[float, Dict[str, Any]]:
@@ -209,10 +229,16 @@ def _execute_python_code(
             metrics["quality_score"] = _compute_quality_score(metrics)
 
             # Return error (if any)
-            error = _extract_run_error(result)
+            error, error_full = _extract_run_error(result)
+            if error_full:
+                metrics["error_full"] = error_full
+            if error:
+                metrics["error_summary"] = error
             
             if not error and result.stdout and ("Panic" in result.stdout or "Error" in result.stdout):
-                 error = f"Error detected in stdout: {result.stdout}"
+                error = "Error detected in stdout"
+                metrics["error_full"] = result.stdout
+                metrics["error_summary"] = error
             return error, result.stdout, metrics
             
         finally:
@@ -222,9 +248,12 @@ def _execute_python_code(
             _safe_remove(json_report_file)
                 
     except subprocess.TimeoutExpired:
-        return f"ERROR: Program execution timed out after {timeout} seconds", "", {"wall_time": float(timeout), "note": "timed_out"}
+        timeout_error = f"ERROR: Program execution timed out after {timeout} seconds"
+        return timeout_error, "", {"wall_time": float(timeout), "note": "timed_out", "error_full": timeout_error, "error_summary": timeout_error}
     except Exception as e:
-        return f"ERROR: Failed to execute program: {str(e)}", "", {}
+        full_error = f"ERROR: Failed to execute program: {str(e)}"
+        summary = _summarize_error_text(full_error, "Execution failed")
+        return summary, "", {"error_full": full_error, "error_summary": summary}
 
 def compile_generated_program(program_code: str, timeout: int = DEFAULT_COMPILE_TIMEOUT, language: str = 'guppy', coverage_source: str = None, source_file_path: str = None):
     """
@@ -296,7 +325,7 @@ def run_coverage_on_file(file_path: str, source_package: str = None, verbose: bo
         # We use a timeout to prevent hanging scripts
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
-            run_error = _extract_run_error(result)
+            run_error, run_error_full = _extract_run_error(result)
                 
         except subprocess.TimeoutExpired:
             return 0.0, "Timeout", {}, ""
@@ -319,6 +348,7 @@ def run_coverage_on_file(file_path: str, source_package: str = None, verbose: bo
                 coverage_data = cov_data
             if cov_error:
                 run_error = f"{run_error}\nCoverage report error: {cov_error}".strip()
+                run_error_full = f"{run_error_full}\nCoverage report error: {cov_error}".strip()
 
             if verbose:
                 try:
@@ -332,9 +362,14 @@ def run_coverage_on_file(file_path: str, source_package: str = None, verbose: bo
                     verbose_report = report_res.stdout
                     if report_res.returncode != 0 and report_res.stderr:
                         run_error = f"{run_error}\nCoverage report output error: {report_res.stderr.strip()}".strip()
+                        run_error_full = f"{run_error_full}\nCoverage report output error: {report_res.stderr.strip()}".strip()
                 except Exception as e:
                     run_error = f"{run_error}\nCoverage report output error: {str(e)}".strip()
-            
+                    run_error_full = f"{run_error_full}\nCoverage report output error: {str(e)}".strip()
+
+        if run_error and run_error_full:
+            return coverage_percent, _summarize_error_text(run_error, "Coverage execution failed"), coverage_data, verbose_report
+
         return coverage_percent, run_error, coverage_data, verbose_report
 
     except Exception as e:

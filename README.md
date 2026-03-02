@@ -80,3 +80,11 @@ Then run either script inside the container:
 ```bash
 ./scripts/Complete_run_qiskit.sh
 ```
+
+### Reports-only Analysis (No Generation)
+
+To run coverage analysis and generate complexity plots for an existing directory of circuit files:
+
+```bash
+python src/generate_coverage_and_complexity.py <input_dir> --language guppy
+```
