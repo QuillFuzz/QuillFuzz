@@ -112,6 +112,42 @@ class Base():
     def get_interesting_circuits_dir(self) -> pathlib.Path:
         return self.run_output_dir / "interesting_circuits"
 
+    def _ensure_qnexus_login(self) -> None:
+        if not self.qnexus_check_login_status():
+            self.qnexus_login()
+
+    def _render_guppy_error(self, error: Exception) -> bool:
+        '''
+        Render Guppy diagnostics for GuppyError exceptions.
+        Returns True if the exception was handled as a GuppyError.
+        '''
+        try:
+            from guppylang_internals.error import GuppyError
+            if isinstance(error, GuppyError):
+                from guppylang_internals.diagnostic import DiagnosticsRenderer
+                from guppylang_internals.engine import DEF_STORE
+
+                renderer = DiagnosticsRenderer(DEF_STORE.sources)
+                renderer.render_diagnostic(error.error)
+                sys.stderr.write("\n".join(renderer.buffer))
+                sys.stderr.write("\n\nGuppy compilation failed due to 1 previous error\n")
+                return True
+        except Exception:
+            # Fall back to non-guppy error path if diagnostics rendering itself fails.
+            return False
+
+        return False
+
+    def _counts_from_qsys_raw(self, raw_counts: Counter[Tuple[Any, ...], int]) -> Counter[int, int]:
+        '''
+        Convert QsysResult collated counts to integer-keyed, sorted counts.
+        '''
+        counts = Counter({
+            ''.join([str(measurement[1]) for measurement in key]): value
+            for key, value in raw_counts.items()
+        })
+        return self.preprocess_counts(counts)
+
     def qnexus_login(self) -> None:
         '''
         Logs into QNexus using environment variables for running QIR jobs
@@ -257,6 +293,7 @@ class pytketTesting(Base):
         Runs circuit on pytket simulator and returns counts
         '''
         backend = AerBackend()
+        is_testcase_interesting = False
 
         try:
             # Get original circuit shots
@@ -264,7 +301,6 @@ class pytketTesting(Base):
             handle1 = backend.process_circuit(uncompiled_circ, n_shots=100000)
             result1 = backend.get_result(handle1)
             counts1 = self.preprocess_counts(result1.get_counts())
-            is_testcase_interesting = False
             consistency_counter = 0
 
             # Compile circuit at 3 different optimisation levels
@@ -407,15 +443,8 @@ class pytketTesting(Base):
                 self.plot_histogram(counts_pytket, "Pytket Circuit Results", 0, circuit_number)
 
         except Exception as e:
-            from guppylang_internals.error import GuppyError
-            if isinstance(e, GuppyError):
-                from guppylang_internals.diagnostic import DiagnosticsRenderer
-                from guppylang_internals.engine import DEF_STORE
-
-                renderer = DiagnosticsRenderer(DEF_STORE.sources)
-                renderer.render_diagnostic(e.error)
-                sys.stderr.write("\n".join(renderer.buffer))
-                sys.stderr.write("\n\nGuppy compilation failed due to 1 previous error\n")
+            if self._render_guppy_error(e):
+                pass
             else:
                 # If it's not a GuppyError, fall back to default hook
                 print("Error during compilation:", e)
@@ -425,8 +454,7 @@ class pytketTesting(Base):
         '''
         Loads pytket circuit as qir and runs it, comparing the results
         '''
-        if not self.qnexus_check_login_status():
-            self.qnexus_login()
+        self._ensure_qnexus_login()
 
         try:
             # Convert pytket circuit to QIR
@@ -557,15 +585,7 @@ class guppyTesting(Base):
             self.save_interesting_circuit(circuit_number)
             return
         except Exception as e:
-            from guppylang_internals.error import GuppyError
-            if isinstance(e, GuppyError):
-                from guppylang_internals.diagnostic import DiagnosticsRenderer
-                from guppylang_internals.engine import DEF_STORE
-
-                renderer = DiagnosticsRenderer(DEF_STORE.sources)
-                renderer.render_diagnostic(e.error)
-                sys.stderr.write("\n".join(renderer.buffer))
-                sys.stderr.write("\n\nGuppy compilation failed due to 1 previous error\n")
+            if self._render_guppy_error(e):
                 return
 
             # If it's not a GuppyError, fall back to default hook
@@ -588,11 +608,8 @@ class guppyTesting(Base):
                  print(f"Warning: No counts collected for circuit {circuit_number}")
             elif len(raw_counts) > 0 and not list(raw_counts.keys())[0]:
                  print(f"Warning: Empty keys in counts for circuit {circuit_number}. Measurements may not be returned/output.")
-            
-            counts_base = Counter({''.join([str(measurement[1]) for measurement in key]): value for key, value in raw_counts.items()})
-            
 
-            counts_base = self.preprocess_counts(counts_base)
+            counts_base = self._counts_from_qsys_raw(raw_counts)
             
             if not counts_base:
                 print(f"Warning: No valid counts after preprocessing for circuit {circuit_number}. Skipping test.")
@@ -635,14 +652,7 @@ class guppyTesting(Base):
             )
             raw_counts_opt = results_opt.collated_counts()
             
-            ## Debug prints
-            # print(f"DEBUG: Circuit {circuit_number} (Opt) Raw counts: {raw_counts_opt}")
-
-            counts_opt = Counter({''.join([str(measurement[1]) for measurement in key]): value for key, value in raw_counts_opt.items()})
-            
-            # print(f"DEBUG: Circuit {circuit_number} (Opt) Processed strings: {counts_opt}")
-
-            counts_opt = self.preprocess_counts(counts_opt)
+            counts_opt = self._counts_from_qsys_raw(raw_counts_opt)
             
             if not counts_opt:
                  print(f"Warning: No valid counts after preprocessing for optimized circuit {circuit_number}.")
@@ -675,8 +685,7 @@ class guppyTesting(Base):
         Compile guppy circuit into hugr and convert to QIR for differential testing
         '''
 
-        if not self.qnexus_check_login_status():
-            self.qnexus_login()
+        self._ensure_qnexus_login()
 
         try:
             hugr = circuit.compile()
@@ -686,9 +695,7 @@ class guppyTesting(Base):
             results = QsysResult(
                 runner.run_shots(Quest(), n_qubits=total_num_qubits, n_shots=1000)
             )
-            counts_guppy = results.collated_counts()
-            counts_guppy = Counter({''.join([measurement[1] for measurement in key]): value for key, value in counts_guppy.items()})
-            counts_guppy = self.preprocess_counts(counts_guppy)
+            counts_guppy = self._counts_from_qsys_raw(results.collated_counts())
 
             qir_LLVM = hugr_to_qir(hugr, emit_text=True)
             project = qnx.projects.get_or_create(name="guppy_qir_diff")
@@ -729,15 +736,7 @@ class guppyTesting(Base):
                 self.plot_histogram(counts_qir, "Guppy-QIR Circuit Results", 0, circuit_number)
                 
         except Exception as e:
-            from guppylang_internals.error import GuppyError
-            if isinstance(e, GuppyError):
-                from guppylang_internals.diagnostic import DiagnosticsRenderer
-                from guppylang_internals.engine import DEF_STORE
-
-                renderer = DiagnosticsRenderer(DEF_STORE.sources)
-                renderer.render_diagnostic(e.error)
-                sys.stderr.write("\n".join(renderer.buffer))
-                sys.stderr.write("\n\nGuppy compilation failed due to 1 previous error\n")
+            if self._render_guppy_error(e):
                 return
 
             # If it's not a GuppyError, fall back to default hook
