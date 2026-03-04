@@ -241,7 +241,7 @@ def main():
     parser.add_argument(
         "--ks-low-threshold",
         type=float,
-        default=0.05,
+        default=0.01,
         help="Threshold below which KS-test p-values are flagged as low in report/log outputs.",
     )
     args = parser.parse_args()
