@@ -54,12 +54,12 @@ from hugr.qsystem.result import QsysResult
 from tket.passes import NormalizeGuppy, PytketHugrPass, PassResult
 from hugr.hugr.base import Hugr
 
-# QIR imports
-from hugr_qir.hugr_to_qir import hugr_to_qir
-from qirrunner import run, OutputHandler
-from pytket.qir.conversion.api import pytket_to_qir, QIRFormat
-import qnexus as qnx
-import pyqir
+# QIR imports (Currently not used)
+# from hugr_qir.hugr_to_qir import hugr_to_qir
+# from qirrunner import run, OutputHandler
+# from pytket.qir.conversion.api import pytket_to_qir, QIRFormat
+# import qnexus as qnx
+# import pyqir
 
 class Base():
     # Define the plots directory as a class variable
@@ -148,26 +148,26 @@ class Base():
         })
         return self.preprocess_counts(counts)
 
-    def qnexus_login(self) -> None:
-        '''
-        Logs into QNexus using environment variables for running QIR jobs
-        '''
-        user_email: str = os.getenv("NEXUS_USERNAME")
-        user_password: str = os.getenv("NEXUS_PWD")
-        try:
-            qnx.client.auth.login_no_interaction(user_email, user_password)
-        except Exception as e:
-            print("Error logging into Nexus:", e)
+    # def qnexus_login(self) -> None:
+    #     '''
+    #     Logs into QNexus using environment variables for running QIR jobs
+    #     '''
+    #     user_email: str = os.getenv("NEXUS_USERNAME")
+    #     user_password: str = os.getenv("NEXUS_PWD")
+    #     try:
+    #         qnx.client.auth.login_no_interaction(user_email, user_password)
+    #     except Exception as e:
+    #         print("Error logging into Nexus:", e)
 
-    def qnexus_check_login_status(self) -> bool:
-        '''
-        Checks if logged into QNexus to prevent trying login multiple times
-        '''
-        try:
-            qnx.teams.get_all()
-            return True
-        except Exception as e:
-            return False
+    # def qnexus_check_login_status(self) -> bool:
+    #     '''
+    #     Checks if logged into QNexus to prevent trying login multiple times
+    #     '''
+    #     try:
+    #         qnx.teams.get_all()
+    #         return True
+    #     except Exception as e:
+    #         return False
 
     def preprocess_counts(self, counts : Counter[Tuple[str, ...], int]) -> Counter[int, int]:
         '''
@@ -450,62 +450,62 @@ class pytketTesting(Base):
                 print("Error during compilation:", e)
                 print("Exception :", traceback.format_exc())
 
-    def run_qir_pytket_diff(self, circuit: Circuit, circuit_number: int) -> None:
-        '''
-        Loads pytket circuit as qir and runs it, comparing the results
-        '''
-        self._ensure_qnexus_login()
+    # def run_qir_pytket_diff(self, circuit: Circuit, circuit_number: int) -> None:
+    #     '''
+    #     Loads pytket circuit as qir and runs it, comparing the results
+    #     '''
+    #     self._ensure_qnexus_login()
 
-        try:
-            # Convert pytket circuit to QIR
-            qir_circuit = circuit.copy()
-            # Flatten and relabel registers to ensure consistent naming
-            FlattenRelabelRegistersPass().apply(qir_circuit)
+    #     try:
+    #         # Convert pytket circuit to QIR
+    #         qir_circuit = circuit.copy()
+    #         # Flatten and relabel registers to ensure consistent naming
+    #         FlattenRelabelRegistersPass().apply(qir_circuit)
             
-            qir_LLVM = pytket_to_qir(qir_circuit, qir_format=QIRFormat.STRING)
-            project = qnx.projects.get_or_create(name="qir_pytket_diff")
-            qnx.context.set_active_project(project)
-            qir_name = "pytket_qir_circuit"+str(circuit_number)
-            jobname_suffix = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-            qir = pyqir.Module.from_ir(pyqir.Context(), qir_LLVM).bitcode
-            qir_program_ref = qnx.qir.upload(qir=qir, name=qir_name, project=project)
+    #         qir_LLVM = pytket_to_qir(qir_circuit, qir_format=QIRFormat.STRING)
+    #         project = qnx.projects.get_or_create(name="qir_pytket_diff")
+    #         qnx.context.set_active_project(project)
+    #         qir_name = "pytket_qir_circuit"+str(circuit_number)
+    #         jobname_suffix = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+    #         qir = pyqir.Module.from_ir(pyqir.Context(), qir_LLVM).bitcode
+    #         qir_program_ref = qnx.qir.upload(qir=qir, name=qir_name, project=project)
 
-            # Run the QIR on H1-Emulator emulator
-            device_name = "H1-Emulator"
+    #         # Run the QIR on H1-Emulator emulator
+    #         device_name = "H1-Emulator"
 
-            qnx.context.set_active_project(project)
-            config = qnx.QuantinuumConfig(device_name=device_name)
+    #         qnx.context.set_active_project(project)
+    #         config = qnx.QuantinuumConfig(device_name=device_name)
 
-            job_name = f"execution-job-qir-{qir_name}-{device_name}-{jobname_suffix}"
-            ref_execute_job = qnx.start_execute_job(
-                programs=[qir_program_ref],
-                n_shots=[1000],
-                backend_config=config,
-                name=job_name,
-            )
+    #         job_name = f"execution-job-qir-{qir_name}-{device_name}-{jobname_suffix}"
+    #         ref_execute_job = qnx.start_execute_job(
+    #             programs=[qir_program_ref],
+    #             n_shots=[1000],
+    #             backend_config=config,
+    #             name=job_name,
+    #         )
 
-            qnx.jobs.wait_for(ref_execute_job)
-            qir_result = qnx.jobs.results(ref_execute_job)[0].download_result()
-            counts_qir = self.preprocess_counts(qir_result.get_counts())
+    #         qnx.jobs.wait_for(ref_execute_job)
+    #         qir_result = qnx.jobs.results(ref_execute_job)[0].download_result()
+    #         counts_qir = self.preprocess_counts(qir_result.get_counts())
 
-            # Run pytket circuit normally
-            backend = AerBackend()
-            uncompiled_pytket_circ = backend.get_compiled_circuit(circuit.copy(), optimisation_level=0)
-            handle = backend.process_circuit(uncompiled_pytket_circ, n_shots=1000)
-            result_pytket = backend.get_result(handle)
-            counts_pytket = self.preprocess_counts(result_pytket.get_counts())
+    #         # Run pytket circuit normally
+    #         backend = AerBackend()
+    #         uncompiled_pytket_circ = backend.get_compiled_circuit(circuit.copy(), optimisation_level=0)
+    #         handle = backend.process_circuit(uncompiled_pytket_circ, n_shots=1000)
+    #         result_pytket = backend.get_result(handle)
+    #         counts_pytket = self.preprocess_counts(result_pytket.get_counts())
 
-            # Run the kstest on the two results
-            ks_value = self.ks_test(counts_qir, counts_pytket, 1000)
-            print(f"QIR vs Pytket ks-test p-value: {ks_value}")
+    #         # Run the kstest on the two results
+    #         ks_value = self.ks_test(counts_qir, counts_pytket, 1000)
+    #         print(f"QIR vs Pytket ks-test p-value: {ks_value}")
 
-            if ks_value < self.KS_THRESHOLD:
-                print(f"Interesting circuit found: {circuit_number}")
-                self.save_interesting_circuit(circuit_number)
+    #         if ks_value < self.KS_THRESHOLD:
+    #             print(f"Interesting circuit found: {circuit_number}")
+    #             self.save_interesting_circuit(circuit_number)
 
-        except Exception as e:
-            print("Error during QIR conversion or execution:", e)
-            print("Exception :", traceback.format_exc())
+    #     except Exception as e:
+    #         print("Error during QIR conversion or execution:", e)
+    #         print("Exception :", traceback.format_exc())
 
 class qiskitTesting(Base):
     def __init__(self):
@@ -680,66 +680,66 @@ class guppyTesting(Base):
             self.save_interesting_circuit(circuit_number)
             
 
-    def guppy_qir_diff_test(self, circuit : Any, circuit_number : int, total_num_qubits : int) -> None:
-        '''
-        Compile guppy circuit into hugr and convert to QIR for differential testing
-        '''
+    # def guppy_qir_diff_test(self, circuit : Any, circuit_number : int, total_num_qubits : int) -> None:
+    #     '''
+    #     Compile guppy circuit into hugr and convert to QIR for differential testing
+    #     '''
 
-        self._ensure_qnexus_login()
+    #     self._ensure_qnexus_login()
 
-        try:
-            hugr = circuit.compile()
-            # Circuit compiled successfully, now differential test hugr
-            # Running hugr on selene
-            runner = build(hugr)
-            results = QsysResult(
-                runner.run_shots(Quest(), n_qubits=total_num_qubits, n_shots=1000)
-            )
-            counts_guppy = self._counts_from_qsys_raw(results.collated_counts())
+    #     try:
+    #         hugr = circuit.compile()
+    #         # Circuit compiled successfully, now differential test hugr
+    #         # Running hugr on selene
+    #         runner = build(hugr)
+    #         results = QsysResult(
+    #             runner.run_shots(Quest(), n_qubits=total_num_qubits, n_shots=1000)
+    #         )
+    #         counts_guppy = self._counts_from_qsys_raw(results.collated_counts())
 
-            qir_LLVM = hugr_to_qir(hugr, emit_text=True)
-            project = qnx.projects.get_or_create(name="guppy_qir_diff")
-            qnx.context.set_active_project(project)
-            qir_name = "guppy_qir_circuit"+str(circuit_number)
-            jobname_suffix = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-            qir = pyqir.Module.from_ir(pyqir.Context(), qir_LLVM).bitcode
-            qir_program_ref = qnx.qir.upload(qir=qir, name=qir_name, project=project)
+    #         qir_LLVM = hugr_to_qir(hugr, emit_text=True)
+    #         project = qnx.projects.get_or_create(name="guppy_qir_diff")
+    #         qnx.context.set_active_project(project)
+    #         qir_name = "guppy_qir_circuit"+str(circuit_number)
+    #         jobname_suffix = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+    #         qir = pyqir.Module.from_ir(pyqir.Context(), qir_LLVM).bitcode
+    #         qir_program_ref = qnx.qir.upload(qir=qir, name=qir_name, project=project)
 
-            # Run the QIR on H1-Emulator
-            device_name = "H1-Emulator"
+    #         # Run the QIR on H1-Emulator
+    #         device_name = "H1-Emulator"
 
-            qnx.context.set_active_project(project)
-            config = qnx.QuantinuumConfig(device_name=device_name)
+    #         qnx.context.set_active_project(project)
+    #         config = qnx.QuantinuumConfig(device_name=device_name)
 
-            job_name = f"execution-job-qir-{qir_name}-{device_name}-{jobname_suffix}"
-            ref_execute_job = qnx.start_execute_job(
-                programs=[qir_program_ref],
-                n_shots=[1000],
-                backend_config=config,
-                name=job_name,
-            )
+    #         job_name = f"execution-job-qir-{qir_name}-{device_name}-{jobname_suffix}"
+    #         ref_execute_job = qnx.start_execute_job(
+    #             programs=[qir_program_ref],
+    #             n_shots=[1000],
+    #             backend_config=config,
+    #             name=job_name,
+    #         )
 
-            qnx.jobs.wait_for(ref_execute_job)
-            qir_result = qnx.jobs.results(ref_execute_job)[0].download_result()
-            counts_qir = self.preprocess_counts(qir_result.get_counts())
+    #         qnx.jobs.wait_for(ref_execute_job)
+    #         qir_result = qnx.jobs.results(ref_execute_job)[0].download_result()
+    #         counts_qir = self.preprocess_counts(qir_result.get_counts())
 
-            # Run the kstest on the two results
-            ks_value = self.ks_test(counts_guppy, counts_qir, 1000)
-            print(f"Guppy vs QIR ks-test p-value: {ks_value}")
+    #         # Run the kstest on the two results
+    #         ks_value = self.ks_test(counts_guppy, counts_qir, 1000)
+    #         print(f"Guppy vs QIR ks-test p-value: {ks_value}")
 
-            if ks_value < self.KS_THRESHOLD:
-                print(f"Interesting circuit found: {circuit_number}")
-                self.save_interesting_circuit(circuit_number)
+    #         if ks_value < self.KS_THRESHOLD:
+    #             print(f"Interesting circuit found: {circuit_number}")
+    #             self.save_interesting_circuit(circuit_number)
 
-            if self.plot:
-                self.plot_histogram(counts_guppy, "Guppy Circuit Results", 0, circuit_number)
-                self.plot_histogram(counts_qir, "Guppy-QIR Circuit Results", 0, circuit_number)
+    #         if self.plot:
+    #             self.plot_histogram(counts_guppy, "Guppy Circuit Results", 0, circuit_number)
+    #             self.plot_histogram(counts_qir, "Guppy-QIR Circuit Results", 0, circuit_number)
                 
-        except Exception as e:
-            if self._render_guppy_error(e):
-                return
+    #     except Exception as e:
+    #         if self._render_guppy_error(e):
+    #             return
 
-            # If it's not a GuppyError, fall back to default hook
-            print("Error during compilation:", e)
-            print("Exception :", traceback.format_exc())
-            self.save_interesting_circuit(circuit_number)
+    #         # If it's not a GuppyError, fall back to default hook
+    #         print("Error during compilation:", e)
+    #         print("Exception :", traceback.format_exc())
+    #         self.save_interesting_circuit(circuit_number)
