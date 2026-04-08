@@ -57,7 +57,20 @@ podman run -it --rm \
 
 ### Prerequisites
 
-1.  **API Keys**: You need to provide API keys for LLM access. Create a `.env` file in the root directory and add your keys there.
+1.  **API Keys**: You need to provide API keys for LLM access. Create a `.env` file in the root directory and add the supported keys there:
+    - OpenAI: `OPENAI_API_KEY`
+    - Anthropic: `ANTHROPIC_API_KEY`
+    - Google: `GEMINI_API_KEY`
+    - Deepseek: `DEEPSEEK_API_KEY`
+
+    Copy and paste this starter template into your `.env` file:
+
+    ```env
+    OPENAI_API_KEY=your_openai_api_key_here
+    ANTHROPIC_API_KEY=your_anthropic_api_key_here
+    GEMINI_API_KEY=your_gemini_api_key_here
+    DEEPSEEK_API_KEY=your_deepseek_api_key_here
+    ```
 
 ### Running Campaigns
 

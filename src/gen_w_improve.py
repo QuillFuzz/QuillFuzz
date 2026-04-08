@@ -584,7 +584,7 @@ def main():
     parser.add_argument("--max_workers", type=int, default=10)
     parser.add_argument("--n_assemble", type=int, default=100)
     parser.add_argument("--n_circuits_per_assembly", type=int, default=2)
-    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose logging with code dumps for every execution")
     parser.add_argument("--training_n", type=int, default=5)
     parser.add_argument("--training_threshold", type=float, default=0.5)
     parser.add_argument("--improver_model", type=str, default="anthropic/claude-sonnet-4-5")
