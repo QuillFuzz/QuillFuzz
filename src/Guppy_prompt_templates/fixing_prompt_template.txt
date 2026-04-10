@@ -3,7 +3,6 @@
 **Goal:** Analyze broken Guppy code, interpret the error trace, and rewrite the code to be syntactically valid and compliant with the strict Guppy language specification.
 
 **Context:**
-
 You are fixing a script designed for a deterministic fuzzing campaign. The logic is intentionally complex to test compiler coverage. Your goal is to resolve the specific error provided without violating the strict invariants of the Guppy language.
 
 ---
@@ -42,7 +41,7 @@ Bash
         
 - **`@guppy.comptime` Functions (Compile-Time Logic):**
     
-    - **Strict Prohibition:** You **MUST NOT** branch on function arguments or measurement outcomes. Treat arguments here as symbolic variables.
+    - **Strict Prohibition:** You **MUST NOT** branch on function arguments, measurement outcomes, or hardcoded constants. Treat arguments here as symbolic variables.
         
 - **Looping:** Loop ranges must use hardcoded integer literals (e.g., `range(4)`), never variable arguments.
     
@@ -56,17 +55,17 @@ Bash
 - **Constraint:** A function decorated with `@guppy` CANNOT use any variable named `pi`.
     
 
-**3. Argument Passing Syntax**
+**3. Argument Passing Syntax & Data Structures**
 
 - **Inside `@guppy` functions:**
     
-    - **ILLEGAL:** Constructing arrays in the call (e.g., `func([q1, q2])`, `func(array(q1, q2))`).
+    - **ILLEGAL:** Constructing arrays in the call (e.g., `func(array(q1, q2))` or `func([q1, q2])`).
         
     - **FIX:** You **MUST** pass a pre-existing, named array variable (e.g., `func(my_qreg)`).
         
 - **Inside `@guppy.comptime` functions:**
     
-    - **LEGAL:** You may construct temporary lists using square brackets (e.g., `func([q1, qreg[0]])`).
+    - **LEGAL:** You may construct a temporary list of qubits using square brackets `[]` to pass as an array argument (e.g., `func([q1, qreg[0]])`).
         
 
 **4. Qubit Lifecycle: "Borrowed" vs. "Owned" (Common Source of Errors)**
@@ -79,19 +78,29 @@ Bash
         
 - **Owned Qubits (Local Variables):**
     
-    - **Creation:** Must be fresh (e.g., `array(qubit() for _ in range(2))`). **Never** include existing variables in a new array definition.
+    - **Creation:** Must be fresh (e.g., `array(qubit() for _ in range(2))`). **Never** include existing variables in a new array definition. No aliasing allowed (`q_new = qubit_old` is **ILLEGAL**).
         
-    - **Cleanup:** You **MUST** consume these before the function ends using `measure` (single) or `measure_array` (array).
+    - **Cleanup:** You **MUST** consume these before the function scope ends using `measure` (single) or `measure_array` (array). `measure_and_reset` does _not_ satisfy this requirement as it keeps the qubit alive.
         
 
-**5. Measurement Strictness**
+**5. Measurement Strictness & Typing (STRICT ENFORCEMENT)**
 
-- **`measure(q)`**: Destructive. Valid ONLY on standalone `qubit` variables. **ILLEGAL** on array elements `q_reg[i]`.
+- **`measure(q)`**: Destructive. Valid ONLY on standalone `qubit` variables. **ILLEGAL** on array elements `q_reg[i]`. Returns `bool`.
     
-- **`measure_array(q_reg)`**: Destructive. Valid ONLY on `array[qubit, N]`.
+- **`measure_array(q_reg)`**: Destructive. Valid ONLY on `array[qubit, N]`. Returns `array[bool, N]`.
     
-- **`measure_and_reset(q)`**: Non-destructive. Valid on standalone `qubit` OR array elements (`q_reg[i]`).
+- **`measure_and_reset(q)`**: Non-destructive. Valid on standalone `qubit` OR array elements (`q_reg[i]`). Returns `bool`.
     
+- **Typing Rules for Measurements:**
+    
+    - Measurements return `bool`, **NOT `int`**.
+        
+    - **No Math:** You **MUST NOT** perform arithmetic on measurements (e.g., `2 * m` is ILLEGAL).
+        
+    - **No Integer Comparison:** You **MUST NOT** compare booleans to integers (`if b == 1:` is ILLEGAL). Use `if b:` or `if not b:`.
+        
+    - **Helper Type Hints:** If passing a measurement to a helper function, the argument MUST be type-hinted as `bool` (e.g., `def helper(m: bool):`).
+        
 
 **6. Main Function Requirements**
 
@@ -106,22 +115,33 @@ Bash
     - No `.compile()` call at the end of the script.
         
 
-**7. Gate Syntax**
+**7. Gate & Argument Uniqueness (No Double Borrowing)**
 
-- **Uniqueness:** Multi-qubit gates (e.g., `cx`, `toffoli`) must use distinct physical qubits (e.g., `cx(q1, q1)` is illegal).
+- **Singular Targets:** Standard quantum gates (e.g., `h`, `x`, `cx`) accept individual `qubit` objects, **NOT** arrays or lists. To apply a gate to an array element, explicitly index it (e.g., `h(qreg[0])`).
+    
+- **Uniqueness:** For any multi-qubit gate (e.g., `cx`, `toffoli`) or function call, you **MUST NOT** pass or borrow the same qubit variable twice. The arguments must be distinct physical qubits (e.g., `cx(q1, q1)` or `func(q1, q1)` is **ILLEGAL**).
     
 - **Angles:** Rotations require wrappers: `rx(q, angle(0.5))`.
     
 - **CRZ:** Syntax is `crz(ctrl, target, angle(...))`. Angle is always last.
     
 
+**8. Array Indexing Rules (STRICT ENFORCEMENT)**
+
+- **Prohibition:** Indexing a qubit array with runtime-evaluated variables is **PROHIBITED**. You **MUST ONLY** use integer literals for indices.
+    
+- **Illegal:** `qreg[i]` (where `i` is a loop variable or runtime evaluated expression).
+    
+- **Legal:** `qreg[0]`, `qreg[2]`.
+    
+
 ---
 
 ### **Your Task**
 
-1. **Analyze:** Identify which line in the faulty code triggered the error trace.
+1. **Analyze:** Identify which line in the faulty code triggered the error trace. Focus closely on Type Mismatches (Lists vs Qubits, Bools vs Ints), Variable Aliasing, Double Borrowing, and Array Indexing.
     
-2. **Diagnose:** Cross-reference the error with the "Constitution" above (e.g., did we pass a list to a `@guppy` function? Did we branch in a `@guppy.comptime` function?).
+2. **Diagnose:** Cross-reference the error with the "Constitution" above (e.g., did we pass a list to a single-qubit gate? Did we compare a boolean measurement to an integer? Did we index an array with a loop variable?).
     
 3. **Refactor:** Rewrite the code to fix the error. **Double-check the `main` function** to ensure it accepts arguments and performs no destructive measurements.
     

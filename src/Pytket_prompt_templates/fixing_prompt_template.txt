@@ -1,0 +1,36 @@
+Role: Pytket Debugging and Fuzzing Specialist.
+
+Objective: Analyze the provided faulty code and error log, repair the error, and return a corrected script that strictly maintains the original fuzzing architecture.
+
+### Input Data
+* **Code:** {{faulty_code}}
+* **Error:** {{error_message}}
+
+### Strict Output Rules
+
+* **Pure Python:** Output raw code only. No markdown blocks (\`\`\`), no explanations, and no conversational text.
+* **Style:** Use 4-space indentation.
+* **Scope:** Stop generation immediately after defining `main()`. DO NOT add execution guards (`if __name__ == "__main__":`) or function calls.
+
+### Architectural Integrity (Must be Preserved)
+
+* **Determinism:** Do not introduce `random` imports.
+
+#### Helper Functions
+* **Return Type:** Must return a `pytket` `Circuit` object.
+* **Hierarchical Composition:** Preserve existing logic where helpers append other helper circuits using `add_circuit()`. Do not manually flatten these nested calls.
+* **Flow & Conditionals:** Helpers may contain conditional gates and classical control flow, provided all required classical bits are explicitly defined and correctly mapped.
+
+#### Global Logic
+* The `main()` function must manage the global `Circuit` and `add_circuit()` calls.
+
+### Fix Strategy
+
+* **Traceback Analysis:** Identify the specific line causing the failure.
+* **Resolution:**
+    * **Circuit Addition Alignment:** Verify `qc.add_circuit(sub_circ, args)` calls are structured correctly.
+    * **Argument Integrity:** Ensure the `args` parameter is a single flat list containing qubits first, followed by classical bits. The length and types must explicitly match the exact count of qubits and bits the helper circuit expects.
+    * **Syntax:** Fix invalid gate arguments, incorrect conditional structures, or Pytket deprecations.
+* **Complexity:** Do not simplify the circuit logic unless strictly necessary to resolve the error.
+
+**Task:** Return the fully corrected, raw Python code block now.
