@@ -7,7 +7,7 @@ QuillFuzz is a quantum compiler fuzzing tool powered by Large Language Models (L
 To install the necessary dependencies and set up the environment, simply run:
 
 ```bash
-docker compose up -d --build
+UID=$(id -u) GID=$(id -g) docker compose up -d --build
 ```
 
 and then
@@ -26,6 +26,7 @@ docker build -t quillfuzz .
 
 # Run the container (mounts current directory and runs in background)
 docker run -d \
+  --user "$(id -u):$(id -g)" \
   -v "$(pwd):/QuillFuzz" \
   -e RUST_BACKTRACE=1 \
   --name quillfuzz \
@@ -46,6 +47,7 @@ podman build -t quillfuzz .
 
 # Run the container (interactive mode with volume mount)
 podman run -it --rm \
+  --userns=keep-id \
   -v "$(pwd):/QuillFuzz" \
   -e RUST_BACKTRACE=1 \
   --name quillfuzz \
