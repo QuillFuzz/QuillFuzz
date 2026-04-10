@@ -9,6 +9,7 @@
 - **Style:** Use 4-space indentation.
     
 - **Scope:** Stop immediately after defining `main()`. DO NOT add execution guards (`if __name__ == "__main__":`), function calls, or print statements.
+    
 
 ### Architectural Constraints
 
@@ -32,7 +33,7 @@
     
 - **Argument Integrity:** You MUST pass a single flat list for `args`. The list must contain the qubit arguments first, followed by the classical bit arguments. The list length and types must explicitly match the exact count of qubits and bits the helper circuit expects.
     
-- **Dynamic Logic:** Use conditional gates via the `condition` keyword argument (e.g., `qc.X(0, condition=bit)`) or `OpType` with `condition_bits`/`condition_value` for branching based on measurements. This is allowed in both `main()` and helper functions.
+- **Dynamic Logic:** Use conditional gates via the `condition` keyword argument. **CRUCIAL: The `condition` argument MUST be exactly ONE single `Bit` object (e.g., `qc.X(0, condition=qc.bits[0])`). Do NOT pass lists of bits, partial registers, or integers. Pytket strictly requires conditions to be a single bit or an entire in-order register; restricting this to a single `Bit` guarantees validity.** Alternatively, use `OpType` with `condition_bits`/`condition_value` following the exact same single-bit restriction. This is allowed in both `main()` and helper functions.
     
 - **Return:** Return the `Circuit` object.
     

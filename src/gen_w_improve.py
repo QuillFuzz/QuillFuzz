@@ -27,6 +27,14 @@ from utils.reporting import (
     summarize_errors,
 )
 
+SUPPORTED_LANGUAGES = ("guppy", "qiskit", "pytket")
+DEFAULT_LANGUAGE = "guppy"
+PROMPT_TEMPLATE_DIRS = {
+    "guppy": "Guppy_prompt_templates",
+    "qiskit": "Qiskit_prompt_templates",
+    "pytket": "Pytket_prompt_templates",
+}
+
 @dataclass
 class GenerationStats:
     cost: float = 0.0
@@ -113,6 +121,15 @@ class ProgramProcessor:
     def run_check(self, code):
         self.log(f"--- {self.elapsed} Running {self.filename} ---\n")
         source_file_path = os.path.join(self.config.current_generated_dir, self.filename) if hasattr(self.config, "current_generated_dir") and self.config.current_generated_dir else None
+
+        # Persist the candidate source before execution so diff testing can copy it
+        # via QUILLFUZZ_SOURCE_FILE when interesting circuits are detected.
+        if source_file_path:
+            try:
+                save_text_to_file(code, source_file_path, verbose=False)
+            except Exception as e:
+                self.log(f"Warning: failed to pre-save source for runtime check ({source_file_path}): {e}")
+
         error, output, metrics, runtime_code = run_generated_program(code, language=self.config.language, source_file_path=source_file_path, circuit_id=self.index)
         metrics = metrics or {}
         self.stats.metrics['execution'] = metrics
@@ -221,6 +238,9 @@ class ProgramProcessor:
                 run_ok, _ = self.run_check(code)
                 if not run_ok:
                     save_path = os.path.join(runtime_fail_dir, self.filename)
+                    generated_path = os.path.join(generated_dir, self.filename)
+                    if os.path.exists(generated_path):
+                        os.remove(generated_path)
                     save_text_to_file(code, save_path)
                     return None, self.stats, list(set(self.encountered_errors)), False
 
@@ -238,6 +258,9 @@ class ProgramProcessor:
         else:
             failure_dir = runtime_fail_dir if final_status == "runtime_fail" else compile_fail_dir
             save_path = os.path.join(failure_dir, self.filename)
+            generated_path = os.path.join(generated_dir, self.filename)
+            if final_status == "runtime_fail" and os.path.exists(generated_path):
+                os.remove(generated_path)
             save_text_to_file(fixed_code if fixed_code else code, save_path)
             return None, self.stats, list(set(self.encountered_errors)), True
 
@@ -575,7 +598,7 @@ def main():
     parser = argparse.ArgumentParser(description="LLM Circuit Generator")
     parser.add_argument("--config_file", type=str)
     parser.add_argument("--run_name", type=str)
-    parser.add_argument("--language", type=str, default="guppy")
+    parser.add_argument("--language", type=str, choices=SUPPORTED_LANGUAGES, default=DEFAULT_LANGUAGE)
     parser.add_argument("--output_dir", type=str)
     parser.add_argument("--prompt_dir", type=str)
     parser.add_argument("--models", nargs='+', default=["deepseek/deepseek-chat"])
@@ -600,8 +623,14 @@ def main():
     args, _ = parser.parse_known_args()
     if args.config_file:
         with open(args.config_file, 'r') as f:
-            parser.set_defaults(**yaml.safe_load(f))
-            args = parser.parse_args()
+            parser.set_defaults(**(yaml.safe_load(f) or {}))
+
+    args = parser.parse_args()
+    args.language = (args.language or DEFAULT_LANGUAGE).lower()
+    if args.language not in SUPPORTED_LANGUAGES:
+        parser.error(
+            f"Unsupported language '{args.language}'. Expected one of: {', '.join(SUPPORTED_LANGUAGES)}"
+        )
 
     # Validate arguments to prevent runtime errors
     if args.n_circuits_per_assembly < 1:
@@ -618,7 +647,10 @@ def main():
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     if not args.prompt_dir:
-        args.prompt_dir = os.path.join(script_dir, "Guppy_prompt_templates" if args.language == "guppy" else "Qiskit_prompt_templates")
+        args.prompt_dir = os.path.join(
+            script_dir,
+            PROMPT_TEMPLATE_DIRS.get(args.language, PROMPT_TEMPLATE_DIRS[DEFAULT_LANGUAGE]),
+        )
     if not args.output_dir:
         args.output_dir = os.path.join(os.path.dirname(script_dir), "local_saved_circuits")
 

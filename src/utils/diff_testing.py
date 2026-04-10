@@ -38,6 +38,7 @@ from pytket.passes import *
 from pytket.passes import RemoveRedundancies, SquashRzPhasedX
 from pytket.extensions.qiskit import AerBackend
 from pytket.extensions.qiskit import AerStateBackend
+import tket
 
 # Qiskit imports
 from qiskit import QuantumCircuit, transpile
@@ -288,39 +289,36 @@ class pytketTesting(Base):
     def __init__(self):
         super().__init__()
     
-    def ks_diff_test(self, circuit : Circuit, circuit_number : int) -> None:
+    def ks_diff_test(self, circuit : Circuit, circuit_number : int) -> float:
         '''
         Runs circuit on pytket simulator and returns counts
         '''
+        ks_value = 1.0
         backend = AerBackend()
-        is_testcase_interesting = False
 
         try:
             # Get original circuit shots
             uncompiled_circ = backend.get_compiled_circuit(circuit, optimisation_level=0)
-            handle1 = backend.process_circuit(uncompiled_circ, n_shots=100000)
+            handle1 = backend.process_circuit(uncompiled_circ, n_shots=10000)
             result1 = backend.get_result(handle1)
             counts1 = self.preprocess_counts(result1.get_counts())
-            consistency_counter = 0
 
             # Compile circuit at 3 different optimisation levels
             for i in range(3):
                 compiled_circ = backend.get_compiled_circuit(circuit, optimisation_level=i+1)
             
                 # Process the compiled circuit
-                handle2 = backend.process_circuit(compiled_circ, n_shots=100000)
+                handle2 = backend.process_circuit(compiled_circ, n_shots=10000)
                 result2 = backend.get_result(handle2)
                 counts2 = self.preprocess_counts(result2.get_counts())
 
                 # Run the kstest on the two results
-                ks_value = self.ks_test(counts1, counts2, 100000)
+                ks_value = self.ks_test(counts1, counts2, 10000)
                 print(f"Optimisation level {i+1} ks-test p-value: {ks_value}")
 
-                # Heuristic to determine if the testcase is interesting
-                if ks_value < 0.2 :
-                    consistency_counter += 1
-                if ks_value < self.KS_THRESHOLD or consistency_counter >= 2:
-                    is_testcase_interesting = True
+                if ks_value < self.KS_THRESHOLD:
+                    print(f"Interesting circuit found: {circuit_number}")
+                    self.save_interesting_circuit(circuit_number)
                 
                 # plot results
                 if self.plot:
@@ -328,13 +326,11 @@ class pytketTesting(Base):
                     self.plot_histogram(counts2, "Compiled Circuit Results", i+1, circuit_number)
 
         except Exception as e:
+            print("Error during pytket differential testing:", e)
             print("Exception :", traceback.format_exc())
             self.save_interesting_circuit(circuit_number)
 
-        # Dump files to a "interesting circuits" folder if found interesting testcase
-        if is_testcase_interesting:
-            print(f"Interesting circuit found: {circuit_number}")
-            self.save_interesting_circuit(circuit_number)
+        return ks_value
 
     def run_circ_statevector(self, circuit : Circuit, circuit_number : int) -> NDArray[np.complex128]:
         '''

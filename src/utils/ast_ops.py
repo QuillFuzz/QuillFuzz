@@ -271,6 +271,69 @@ if __name__ == '__main__':
     return import_stmt + code + wrapper_code
 
 
+def wrap_for_compilation_pytket(code: str) -> str:
+    """
+    Parses the code to find main and adds a main block to execute it.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code
+
+    has_main = False
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == 'main':
+            has_main = True
+            break
+
+    if not has_main:
+        return code
+
+    has_main_block = False
+    for node in tree.body:
+         if isinstance(node, ast.If) and isinstance(node.test, ast.Compare):
+             if isinstance(node.test.left, ast.Name) and node.test.left.id == "__name__":
+                 has_main_block = True
+                 break
+
+    if has_main_block:
+        return code
+
+    tket_import = "import tket\n"
+    if "import tket" in code or "from tket" in code:
+        tket_import = ""
+
+    wrapper_code =  "\nif __name__ == '__main__':\n\t main()\n"
+    return tket_import + code + wrapper_code
+
+
+def wrap_for_testing_pytket(code: str, circuit_id: int = 0) -> str:
+    try:
+        tree = ast.parse(code)
+        has_main = False
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name == 'main':
+                has_main = True
+                break
+        if not has_main:
+            return code
+    except SyntaxError:
+        return code
+
+    tket_import = "import tket\n"
+    if "import tket" in code or "from tket" in code:
+        tket_import = ""
+
+    import_stmt = "from src.utils.diff_testing import pytketTesting\n"
+
+    wrapper_code = f"""
+if __name__ == '__main__':
+    pt = pytketTesting()
+    pt.ks_diff_test(main(), {circuit_id})
+"""
+    return tket_import + import_stmt + code + wrapper_code
+
+
 class QiskitMainTransformer(ast.NodeTransformer):
     def __init__(self):
         self.max_qubits = 1

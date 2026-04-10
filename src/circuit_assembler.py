@@ -30,8 +30,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--language",
         required=True,
-        choices=["guppy", "qiskit"],
-        help="Language of circuits (guppy or qiskit)",
+        choices=["guppy", "qiskit", "pytket"],
+        help="Language of circuits (guppy, qiskit, or pytket)",
     )
     return parser.parse_args()
 

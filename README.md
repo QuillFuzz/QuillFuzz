@@ -1,6 +1,6 @@
 # QuillFuzz
 
-QuillFuzz is a quantum compiler fuzzing tool powered by Large Language Models (LLMs). It automates the generation and refinement of quantum circuits to test and validate quantum compilers such as Qiskit and Guppy.
+QuillFuzz is a quantum compiler fuzzing tool powered by Large Language Models (LLMs). It automates the generation and refinement of quantum circuits to test and validate quantum compilers such as Guppy, Qiskit, and Pytket.
 
 ## Setup
 
@@ -76,10 +76,10 @@ podman run -it --rm \
 
 ### Running Campaigns
 
-To run pre-configured fuzzing campaigns (Guppy or Qiskit), ensure the scripts are executable:
+To run pre-configured fuzzing campaigns (Guppy, Qiskit, or Pytket), ensure the scripts are executable:
 
 ```bash
-chmod +x ./scripts/Complete_run_guppy.sh ./scripts/Complete_run_qiskit.sh
+chmod +x ./scripts/Complete_run_guppy.sh ./scripts/Complete_run_qiskit.sh ./scripts/Complete_run_pytket.sh
 ```
 
 Then run either script inside the container:
@@ -94,6 +94,12 @@ Then run either script inside the container:
 
 ```bash
 ./scripts/Complete_run_qiskit.sh
+```
+
+**For Pytket Fuzzing:**
+
+```bash
+./scripts/Complete_run_pytket.sh
 ```
 
 ### Reports-only Analysis (No Generation)

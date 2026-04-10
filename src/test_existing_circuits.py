@@ -232,7 +232,7 @@ def process_single_file(
 def main():
     parser = argparse.ArgumentParser(description="Run tests on existing generated circuits without generating new ones.")
     parser.add_argument("input_dir", help="Directory containing .py files to test")
-    parser.add_argument("--language", choices=["guppy", "qiskit"], default="guppy", help="Language of the files to test")
+    parser.add_argument("--language", choices=["guppy", "qiskit", "pytket"], default="guppy", help="Language of the files to test")
     parser.add_argument("--workers", type=int, default=2, help="Number of concurrent workers")
     parser.add_argument("--verbose", action="store_true", help="Include wrapped code in the log output")
     parser.add_argument("--output-log", help="Optional path for the execution log file")
