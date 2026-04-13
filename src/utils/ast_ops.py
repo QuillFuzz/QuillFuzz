@@ -307,7 +307,15 @@ def wrap_for_compilation_pytket(code: str) -> str:
     return tket_import + code + wrapper_code
 
 
-def wrap_for_testing_pytket(code: str, circuit_id: int = 0) -> str:
+def wrap_for_testing_pytket(
+    code: str,
+    circuit_id: int = 0,
+    use_tket2: bool = False,
+    mode: str = "curated",
+    random_n: int | None = None,
+    random_source: str = "curated",
+    seed: int | None = None,
+) -> str:
     try:
         tree = ast.parse(code)
         has_main = False
@@ -326,10 +334,21 @@ def wrap_for_testing_pytket(code: str, circuit_id: int = 0) -> str:
 
     import_stmt = "from src.utils.diff_testing import pytketTesting\n"
 
+    pass_args = [
+        f"mode={mode!r}",
+        f"random_source={random_source!r}",
+    ]
+    if random_n is not None:
+        pass_args.append(f"random_n={random_n}")
+    if seed is not None:
+        pass_args.append(f"seed={seed}")
+
+    method_name = "ks_diff_test_tket2" if use_tket2 else "ks_diff_test"
+
     wrapper_code = f"""
 if __name__ == '__main__':
     pt = pytketTesting()
-    pt.ks_diff_test(main(), {circuit_id})
+    pt.{method_name}(main(), {circuit_id}, {', '.join(pass_args)})
 """
     return tket_import + import_stmt + code + wrapper_code
 
