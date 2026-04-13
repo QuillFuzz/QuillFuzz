@@ -12,7 +12,7 @@ from pytket.extensions.qiskit import AerBackend, AerStateBackend
 from guppylang import guppy, enable_experimental_features
 from guppylang.std.quantum import *
 from guppylang.std.qsystem import *
-from guppylang.std.builtins import result, array
+from guppylang.std.builtins import result
 from selene_sim import build, Quest
 from hugr.qsystem.result import QsysResult
 from tket.passes import NormalizeGuppy, PytketHugrPass, PassResult
