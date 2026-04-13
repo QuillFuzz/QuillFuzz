@@ -1,31 +1,22 @@
 from typing import Any
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
-from collections import Counter
 import random
 import traceback
 
-from guppylang import guppy
 from guppylang import enable_experimental_features
+enable_experimental_features()
 from guppylang.std.quantum import *
 from guppylang.std.qsystem import *
-from guppylang.std.builtins import result, array
-enable_experimental_features()
 from selene_sim import build, Quest
 from hugr.qsystem.result import QsysResult
 from tket.passes import NormalizeGuppy, PytketHugrPass, PassResult
 from hugr.hugr.base import Hugr
-from pytket.circuit import Circuit
 from pytket.passes import *
-from pytket.passes import RemoveRedundancies, SquashRzPhasedX
-from pytket.extensions.qiskit import AerBackend
 
 from .base import Base
 
 
 class guppyTesting(Base):
-    def __init__(self):
-        super().__init__()
-
     def ks_diff_test(self, circuit: Any, circuit_number: int, n_qubits: int = 10) -> None:
         hugr = None
 

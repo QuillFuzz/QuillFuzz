@@ -8,23 +8,18 @@ import numpy as np
 
 from pytket.circuit import Circuit
 from pytket.passes import *
-from pytket.passes import RemoveRedundancies, SquashRzPhasedX
-from pytket.extensions.qiskit import AerBackend
-from pytket.extensions.qiskit import AerStateBackend
-from guppylang import guppy
-from guppylang import enable_experimental_features
+from pytket.extensions.qiskit import AerBackend, AerStateBackend
+from guppylang import guppy, enable_experimental_features
 from guppylang.std.quantum import *
-from guppylang.std.quantum import qubit
 from guppylang.std.qsystem import *
-from guppylang.std.qsystem import measure_array
 from guppylang.std.builtins import result, array
 from selene_sim import build, Quest
 from hugr.qsystem.result import QsysResult
 from tket.passes import NormalizeGuppy, PytketHugrPass, PassResult
 from hugr.hugr.base import Hugr
 
+# Base testing class
 from .base import Base
-
 enable_experimental_features()
 
 
