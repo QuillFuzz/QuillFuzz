@@ -29,10 +29,11 @@ from utils.reporting import (
 
 SUPPORTED_LANGUAGES = ("guppy", "qiskit", "pytket")
 DEFAULT_LANGUAGE = "guppy"
+PROMPTS_ROOT_DIRNAME = "prompts"
 PROMPT_TEMPLATE_DIRS = {
-    "guppy": "Guppy_prompt_templates",
-    "qiskit": "Qiskit_prompt_templates",
-    "pytket": "Pytket_prompt_templates",
+    "guppy": "guppy",
+    "qiskit": "qiskit",
+    "pytket": "pytket",
 }
 
 @dataclass
@@ -309,6 +310,7 @@ def run_training_phase(model, args, common_run_dir, main_logfile_path):
     
     prompt_filename = "generation_prompt.txt"
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)
     
     if args.training_n <= 0:
         return prompt_filename
@@ -380,7 +382,7 @@ def run_training_phase(model, args, common_run_dir, main_logfile_path):
                 prompt_filename = improve_prompt_logic(
                     args.improver_model, 
                     current_prompt_path,
-                    os.path.join(script_dir, "Common_prompt_templates"),
+                    os.path.join(project_root, PROMPTS_ROOT_DIRNAME, "common"),
                     new_prompt_path, 
                     training_errors, 
                     args.language, 
@@ -646,9 +648,11 @@ def main():
         args.n_programs = 0
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)
     if not args.prompt_dir:
         args.prompt_dir = os.path.join(
-            script_dir,
+            project_root,
+            PROMPTS_ROOT_DIRNAME,
             PROMPT_TEMPLATE_DIRS.get(args.language, PROMPT_TEMPLATE_DIRS[DEFAULT_LANGUAGE]),
         )
     if not args.output_dir:
