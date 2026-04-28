@@ -4,55 +4,67 @@ QuillFuzz is a quantum compiler fuzzing tool powered by Large Language Models (L
 
 ## Setup
 
-To install the necessary dependencies and set up the environment, simply run:
+QuillFuzz can be run with Docker Compose, Docker, or Podman. The container is kept alive with `tail -f /dev/null`, so you can enter and leave an interactive shell without stopping the container.
+
+### Docker Compose
+
+Recommended when Compose is available:
 
 ```bash
 UID=$(id -u) GID=$(id -g) docker compose up -d --build
+docker compose exec quillfuzz /bin/bash
 ```
 
-and then
+### Docker
+
+Use this if you want a persistent container without Compose:
 
 ```bash
-docker compose exec quillfuzz bash
-```
-
-### Alternative Setup (Docker)
-
-If `docker compose` is not available, you can build and run using standard docker commands:
-
-```bash
-# Build the image
 docker build -t quillfuzz .
 
-# Run the container (mounts current directory and runs in background)
 docker run -d \
   --user "$(id -u):$(id -g)" \
   -v "$(pwd):/QuillFuzz" \
+  -w /QuillFuzz \
   -e RUST_BACKTRACE=1 \
   --name quillfuzz \
   quillfuzz \
   tail -f /dev/null
 
-# Enter the container
-docker exec -it quillfuzz bash
+docker exec -it quillfuzz /bin/bash
 ```
 
-### Alternative Setup (Podman)
+### Podman
 
-If you prefer using Podman or if Docker is not available:
+Use this if you prefer Podman or Docker is unavailable:
 
 ```bash
-# Build the image
 podman build -t quillfuzz .
 
-# Run the container (interactive mode with volume mount)
-podman run -it --rm \
+podman run -d \
   --userns=keep-id \
   -v "$(pwd):/QuillFuzz" \
+  -w /QuillFuzz \
   -e RUST_BACKTRACE=1 \
   --name quillfuzz \
   quillfuzz:latest \
-  bash
+  tail -f /dev/null
+
+podman exec -it quillfuzz /bin/bash
+```
+
+To leave the shell, use `exit` or Ctrl+D. That only closes the shell session; it does not stop the detached container. Reconnect with the same `exec` command at any time.
+
+The `docker exec` and `podman exec` examples below apply to the standalone container named `quillfuzz` created by the Docker or Podman commands above. If you start QuillFuzz with Compose, keep using `docker compose exec quillfuzz /bin/bash`.
+
+To stop a standalone container later, use the matching engine:
+
+```bash
+docker stop quillfuzz
+docker rm quillfuzz
+
+podman stop quillfuzz
+podman rm quillfuzz
 ```
 
 ## Running QuillFuzz
@@ -76,13 +88,13 @@ podman run -it --rm \
 
 ### Running Campaigns
 
-To run pre-configured fuzzing campaigns (Guppy, Qiskit, or Pytket), ensure the scripts are executable:
+To run pre-configured fuzzing campaigns (Guppy, Qiskit, or Pytket), ensure the scripts are executable once:
 
 ```bash
 chmod +x ./scripts/Complete_run_guppy.sh ./scripts/Complete_run_qiskit.sh ./scripts/Complete_run_pytket.sh
 ```
 
-Then run either script inside the container:
+Then run the desired script inside the container:
 
 **For Guppy Fuzzing:**
 
@@ -100,6 +112,35 @@ Then run either script inside the container:
 
 ```bash
 ./scripts/Complete_run_pytket.sh
+```
+
+### Detached Campaigns
+
+If you want a campaign to keep running after you disconnect from SSH, start it from the host and write logs to the mounted project directory. These commands apply to the standalone `quillfuzz` container; if you are using Compose, replace them with `docker compose exec quillfuzz ...`.
+
+```bash
+mkdir -p logs
+
+docker exec -d quillfuzz bash -lc 'cd /QuillFuzz && ./scripts/Complete_run_guppy.sh > /QuillFuzz/logs/guppy_run.log 2>&1'
+
+podman exec -d quillfuzz bash -lc 'cd /QuillFuzz && ./scripts/Complete_run_guppy.sh > /QuillFuzz/logs/guppy_run.log 2>&1'
+```
+
+Use the same pattern for Qiskit and Pytket by swapping the script and log filename. To monitor a detached run:
+
+```bash
+docker exec quillfuzz pgrep -af Complete_run_guppy.sh
+docker exec quillfuzz tail -f /QuillFuzz/logs/guppy_run.log
+
+podman exec quillfuzz pgrep -af Complete_run_guppy.sh
+podman exec quillfuzz tail -f /QuillFuzz/logs/guppy_run.log
+```
+
+Stop a detached run with the matching engine:
+
+```bash
+docker exec quillfuzz pkill -f Complete_run_guppy.sh
+podman exec quillfuzz pkill -f Complete_run_guppy.sh
 ```
 
 ### Reports-only Analysis (No Generation)
