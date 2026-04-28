@@ -100,7 +100,7 @@ RUN uv pip install --no-build-isolation \
     pytket-qir \
     qnexus \
     tket \
-    selene-sim \
+    selene-sim==0.2.12 \
     guppylang \
     litellm \
     coverage \
