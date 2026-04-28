@@ -4,38 +4,46 @@
 
 ### Strict Output Rules
 
+- **Imports:** The code must begin with the exact imports required. At minimum: `from pytket import Circuit`. If `OpType` is used (for conditional gates), also `from pytket import OpType`. No other imports are allowed.
 - **Pure Python:** Output raw code only. No markdown blocks (```), no intro/outro text, and no comments outside the code.
-    
 - **Style:** Use 4-space indentation.
-    
 - **Scope:** Stop immediately after defining `main()`. DO NOT add execution guards (`if __name__ == "__main__":`), function calls, or print statements.
-    
 
 ### Architectural Constraints
 
 - **Determinism:** Logic must be deterministic (no `random` module). Use loop indices or constants for variability.
-    
+- **No Undefined Methods:** Only use methods that actually exist in pytket:
+    - **Gate operations:** `X`, `CX`, `H`, `T`, `Rz`, `Measure` (case‑sensitive – `Measure` with capital M, not `measure`).  
+    - **Composition:** `add_circuit`.  
+    - **Unit access:** `qubits`, `bits`.  
+    - **Absolutely forbidden:** `barrier`, `measure` (lowercase), `append`, `compose`, `add_subcircuit`, any other method not listed.  
+- **Parametric gate order:** For `Rz` (and any other parametric gate you use), the angle (float, radians) is the **first** positional argument, the qubit index (int or Qubit) is the **second**. Example: `qc.Rz(0.5, 0, condition=qc.bits[0])`.  
+- **Measurement:** The measurement operation is `Measure`. Syntax: `qc.Measure(qubit, bit)`.
 
 #### Helper Functions (Modular Logic)
 
-- **Initialization:** Must build a local `pytket` `Circuit` and return it.
-    
-- **Hierarchical Composition:** Helpers may append other helper circuits (nesting) using `circ.add_circuit(sub_circ, args)`, in addition to standard gates.
-    
-- **Flow & Conditionals:** Helpers may contain conditional gates and classical control flow, provided all required classical bits are explicitly defined in the sub-circuit and correctly mapped via `args` when added to the parent.
-    
+- **Initialization:** Must build a local `pytket` `Circuit` and return it. If the helper needs classical bits for conditions, provide both qubit and bit counts: `Circuit(n_qubits, n_bits)`.  
+- **Hierarchical Composition:** Helpers may append other helper circuits (nesting) by first calling the nested helper, storing its returned circuit in a variable, and then using `circ.add_circuit(stored_circ, qubits, bits)`. **Never call a helper directly inside `add_circuit`**; always use a variable.  
+- **Flow & Conditionals:** Helpers may contain conditional gates. When using conditions, the classical bits must be explicitly defined in the helper’s bit register, and the condition must be exactly **one single `Bit` object** (never `None`, never a list or a slice). Example: `condition=sub_circ.bits[0]`. The required classical bits must be correctly mapped via the `qubits` and `bits` arguments when the helper is added to a parent.
 
 #### Main Function (Global Logic)
 
-- **Initialization:** Initialize the main `pytket` `Circuit` (e.g., `qc = Circuit(num_qubits, num_bits)`).
-    
-- **Appending Helpers:** Use `qc.add_circuit(sub_circ, args)`.
-    
-- **Argument Integrity:** You MUST pass a single flat list for `args`. The list must contain the qubit arguments first, followed by the classical bit arguments. The list length and types must explicitly match the exact count of qubits and bits the helper circuit expects.
-    
-- **Dynamic Logic:** Use conditional gates via the `condition` keyword argument. **CRUCIAL: The `condition` argument MUST be exactly ONE single `Bit` object (e.g., `qc.X(0, condition=qc.bits[0])`). Do NOT pass lists of bits, partial registers, or integers. Pytket strictly requires conditions to be a single bit or an entire in-order register; restricting this to a single `Bit` guarantees validity.** Alternatively, use `OpType` with `condition_bits`/`condition_value` following the exact same single-bit restriction. This is allowed in both `main()` and helper functions.
-    
+- **Initialization:** Initialize the main `Circuit` with explicit numbers of qubits and classical bits, e.g., `qc = Circuit(num_qubits, num_bits)`. Ensure every classical bit used in a condition exists in the circuit’s bit register.  
+- **Appending Helpers:** Use `qc.add_circuit(sub_circ, qubit_list, bit_list)` (or `qc.add_circuit(sub_circ, qubit_list)` if the subcircuit has no classical bits).  
+    - `sub_circ` must be a single `Circuit` variable (the result of calling a helper).  
+    - `qubit_list` is a **list of `Qubit` objects** of length exactly equal to `sub_circ.n_qubits`.  
+    - `bit_list` is a **list of `Bit` objects** of length exactly equal to `sub_circ.n_bits`; it is **mandatory if `sub_circ` has any bits**, otherwise omitted entirely.  
+    - **Do not** pass a single flat list mixing qubits and bits.  
+    - **Do not** pass `args` as a keyword argument (e.g., `args=...`).  
+    - **Do not** pass more than three arguments to `add_circuit`; the third is always the bit list if needed.  
+    - **Do not** use keyword arguments like `condition_bits` or `condition_value` with `add_circuit`.  
+    - Example with bits: `inner = inner_circ(); qc.add_circuit(inner, [qc.qubits[0], qc.qubits[1]], [qc.bits[0]])`.  
+    - Example without bits: `inner = inner_circ(); qc.add_circuit(inner, [qc.qubits[0], qc.qubits[1]])`.  
+- **Argument Integrity:** The `qubit_list` must contain exactly `sub_circ.n_qubits` Qubit objects from the enclosing circuit, in the order matching the subcircuit’s qubit placement. The `bit_list` (if needed) must contain exactly `sub_circ.n_bits` Bit objects, matching the subcircuit’s bit ordering. Every element must be a `Qubit` or `Bit` object (never integers, strings, or sub‑circuits).  
+- **Dynamic Logic:** Use conditional gates via the `condition` keyword argument.  
+    - **CRUCIAL: The `condition` argument MUST be exactly ONE single `Bit` object.** Use indexing to obtain a single bit: `condition=qc.bits[0]`. **Do NOT pass a list**, e.g., `condition=[qc.bits[0]]` is forbidden. **Do NOT pass slices or partial registers.** A single `Bit` guarantees validity.  
+    - The same single‑bit restriction applies to any use of `OpType` with `condition_bits`/`condition_value` (if used).  
+    - This is allowed in both `main()` and helper functions.  
 - **Return:** Return the `Circuit` object.
-    
 
 **Task:** Generate a novel Pytket script adhering to these constraints now.
