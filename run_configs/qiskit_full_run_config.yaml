@@ -1,6 +1,7 @@
 language: qiskit
 models:
-  - deepseek/deepseek-chat
+  # - deepseek/deepseek-chat
+  - deepseek/deepseek-v4-flash
   # - deepseek/deepseek-reasoner
   # - anthropic/claude-sonnet-4-5
   
