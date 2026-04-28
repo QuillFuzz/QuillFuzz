@@ -315,7 +315,7 @@ def run_training_phase(model, args, common_run_dir, main_logfile_path):
     if args.training_n <= 0:
         return prompt_filename
 
-    max_rounds = 3 
+    max_rounds = args.max_rounds
 
     best_prompt = prompt_filename
     best_fix_ratio = 1.0
@@ -615,6 +615,7 @@ def main():
     parser.add_argument("--improver_model", type=str, default="anthropic/claude-sonnet-4-5")
     parser.add_argument("--reasoning_effort", type=str, default="high")
     parser.add_argument("--improve_prompt", action="store_true", default=False, help="Enable prompt improvement stage")
+    parser.add_argument("--max_rounds", type=int, default=3, help="Maximum number of prompt-improvement rounds during training")
     parser.add_argument(
         "--ks_low_threshold",
         type=float,
@@ -704,8 +705,5 @@ def main():
     with open(performance_summary_path, "w", encoding="utf-8") as f:
         json.dump(performance_summary, f, indent=2)
     print(f"Performance summary JSON: {performance_summary_path}")
-
-
-
 if __name__ == "__main__":
     main()
