@@ -1,11 +1,40 @@
 import ast
 import logging
-from .ast_ops import is_qubit_guppy, get_array_size_guppy, GuppyCircuitRenamer, QiskitMainTransformer
+from .ast_ops import is_qubit_guppy, get_array_size_guppy, CircuitRenamer, QiskitMainTransformer
+
+def _validate_qiskit_if_test_usage(tree):
+    issues = []
+
+    class MainVisitor(ast.NodeVisitor):
+        def __init__(self):
+            self.in_main = False
+
+        def visit_FunctionDef(self, node):
+            if node.name == 'main':
+                previous_state = self.in_main
+                self.in_main = True
+                self.generic_visit(node)
+                self.in_main = previous_state
+                return
+            self.generic_visit(node)
+
+        def visit_Call(self, node):
+            if self.in_main and isinstance(node.func, ast.Attribute) and node.func.attr == 'if_test':
+                bad_keywords = [kw.arg for kw in node.keywords if kw.arg in {'body', 'true_body', 'qubits', 'clbits'}]
+                if len(node.args) > 1 or bad_keywords:
+                    issues.append(
+                        'legacy positional-body if_test usage is unsupported; use the context-manager form `with qc.if_test((clbit, val)):` instead'
+                    )
+            self.generic_visit(node)
+
+    MainVisitor().visit(tree)
+    if issues:
+        raise ValueError('; '.join(dict.fromkeys(issues)))
 
 def assemble_qiskit(files, output_path, unique_index=0):
     all_imports = []
     renamed_bodies = []
-    main_calls = []
+    main_call_blocks = []
     main_resource_reqs = []
 
     # Add required import for diff testing
@@ -47,6 +76,10 @@ def assemble_qiskit(files, output_path, unique_index=0):
             # Transform main function to use shared resources
             transformer = QiskitMainTransformer()
             tree = transformer.visit(tree)
+
+            # Reject legacy if_test branch bodies so assembled output only uses
+            # the context-manager style that matches the official Qiskit docs.
+            _validate_qiskit_if_test_usage(tree)
             
             # Update global max requirements
             global_max_qubits = max(global_max_qubits, transformer.max_qubits)
@@ -89,7 +122,7 @@ def assemble_qiskit(files, output_path, unique_index=0):
                 top_level_nodes.append(node)
                 
             # Rename
-            renamer = GuppyCircuitRenamer(prefix, file_global_funcs)
+            renamer = CircuitRenamer(prefix, file_global_funcs)
             new_nodes = []
             for node in top_level_nodes:
                 new_node = renamer.visit(node)
@@ -99,13 +132,53 @@ def assemble_qiskit(files, output_path, unique_index=0):
             
             # Store the call to the renamed main function
             req_qubits, req_clbits = main_resource_reqs[-1]
-            main_calls.append(ast.Expr(
+            local_qr_name = f"{prefix}qr"
+            local_cr_name = f"{prefix}cr"
+            local_qc_name = f"{prefix}qc"
+
+            local_qr_init = ast.Assign(
+                targets=[ast.Name(id=local_qr_name, ctx=ast.Store())],
+                value=ast.Call(
+                    func=ast.Name(id='QuantumRegister', ctx=ast.Load()),
+                    args=[
+                        ast.Constant(value=max(1, req_qubits)),
+                        ast.Constant(value=f"{prefix}q"),
+                    ],
+                    keywords=[]
+                )
+            )
+
+            local_cr_init = ast.Assign(
+                targets=[ast.Name(id=local_cr_name, ctx=ast.Store())],
+                value=ast.Call(
+                    func=ast.Name(id='ClassicalRegister', ctx=ast.Load()),
+                    args=[
+                        ast.Constant(value=max(1, req_clbits)),
+                        ast.Constant(value=f"{prefix}c"),
+                    ],
+                    keywords=[]
+                )
+            )
+
+            local_qc_init = ast.Assign(
+                targets=[ast.Name(id=local_qc_name, ctx=ast.Store())],
+                value=ast.Call(
+                    func=ast.Name(id='QuantumCircuit', ctx=ast.Load()),
+                    args=[
+                        ast.Name(id=local_qr_name, ctx=ast.Load()),
+                        ast.Name(id=local_cr_name, ctx=ast.Load()),
+                    ],
+                    keywords=[]
+                )
+            )
+
+            local_main_call = ast.Expr(
                 value=ast.Call(
                     func=ast.Name(id=f"{prefix}main", ctx=ast.Load()),
                     args=[
-                        ast.Name(id='qc', ctx=ast.Load()),
+                        ast.Name(id=local_qc_name, ctx=ast.Load()),
                         ast.Subscript(
-                            value=ast.Name(id='qr', ctx=ast.Load()),
+                            value=ast.Name(id=local_qr_name, ctx=ast.Load()),
                             slice=ast.Slice(
                                 lower=None,
                                 upper=ast.Constant(value=max(1, req_qubits)),
@@ -114,7 +187,7 @@ def assemble_qiskit(files, output_path, unique_index=0):
                             ctx=ast.Load(),
                         ),
                         ast.Subscript(
-                            value=ast.Name(id='cr', ctx=ast.Load()),
+                            value=ast.Name(id=local_cr_name, ctx=ast.Load()),
                             slice=ast.Slice(
                                 lower=None,
                                 upper=ast.Constant(value=max(1, req_clbits)),
@@ -125,7 +198,53 @@ def assemble_qiskit(files, output_path, unique_index=0):
                     ],
                     keywords=[]
                 )
-            ))
+            )
+
+            compose_local = ast.Expr(
+                value=ast.Call(
+                    func=ast.Attribute(
+                        value=ast.Name(id='qc', ctx=ast.Load()),
+                        attr='compose',
+                        ctx=ast.Load(),
+                    ),
+                    args=[ast.Name(id=local_qc_name, ctx=ast.Load())],
+                    keywords=[
+                        ast.keyword(
+                            arg='qubits',
+                            value=ast.Subscript(
+                                value=ast.Name(id='qr', ctx=ast.Load()),
+                                slice=ast.Slice(
+                                    lower=None,
+                                    upper=ast.Constant(value=max(1, req_qubits)),
+                                    step=None,
+                                ),
+                                ctx=ast.Load(),
+                            ),
+                        ),
+                        ast.keyword(
+                            arg='clbits',
+                            value=ast.Subscript(
+                                value=ast.Name(id='cr', ctx=ast.Load()),
+                                slice=ast.Slice(
+                                    lower=None,
+                                    upper=ast.Constant(value=max(1, req_clbits)),
+                                    step=None,
+                                ),
+                                ctx=ast.Load(),
+                            ),
+                        ),
+                        ast.keyword(arg='inplace', value=ast.Constant(value=True)),
+                    ],
+                )
+            )
+
+            main_call_blocks.append([
+                local_qr_init,
+                local_cr_init,
+                local_qc_init,
+                local_main_call,
+                compose_local,
+            ])
             
         except Exception as e:
             logging.error(f"Error processing {file_path}: {e}")
@@ -188,8 +307,9 @@ def assemble_qiskit(files, output_path, unique_index=0):
 
     master_body = [qr_init, cr_init, qc_init]
     
-    if main_calls:
-        master_body.extend(main_calls)
+    if main_call_blocks:
+        for block in main_call_blocks:
+            master_body.extend(block)
     else:
         master_body.append(ast.Pass())
 
@@ -262,7 +382,7 @@ def assemble_guppy(files, output_path, unique_index=0):
                 top_level_nodes.append(node)
                 
             # Rename
-            renamer = GuppyCircuitRenamer(prefix, file_global_funcs)
+            renamer = CircuitRenamer(prefix, file_global_funcs)
             new_nodes = []
             for node in top_level_nodes:
                 # Filter out top-level executions like 'main.compile()' 
@@ -494,7 +614,7 @@ def assemble_pytket(files, output_path, unique_index=0):
 
                 top_level_nodes.append(node)
 
-            renamer = GuppyCircuitRenamer(prefix, file_global_funcs)
+            renamer = CircuitRenamer(prefix, file_global_funcs)
             new_nodes = []
             for node in top_level_nodes:
                 new_node = renamer.visit(node)

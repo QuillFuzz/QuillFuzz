@@ -36,6 +36,13 @@ Fix Strategy:
 
     Resolution:
 
+        if_test Style: Rewrite any positional-body `if_test` usage into the context-manager form:
+            with qc.if_test((clbit, val)) as else_:
+                ...
+            with else_:
+                ...
+        Do not keep `body = qc`, `true_body = qc`, or any other branch alias that reuses the full circuit as the conditional body.
+
         Append Alignment: Verify qc.append() calls strictly follow the (instruction, qargs, cargs) order.
 
         Count Matching: Ensure the qargs and cargs lists are fully populated and exactly match the number of qubits/bits defined in the helper.

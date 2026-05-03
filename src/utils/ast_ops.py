@@ -85,7 +85,7 @@ def get_code_complexity_metrics(code: str) -> dict:
         pass
     return metrics
 
-class GuppyCircuitRenamer(ast.NodeTransformer):
+class CircuitRenamer(ast.NodeTransformer):
     def __init__(self, prefix, global_funcs):
         self.prefix = prefix
         self.global_funcs = global_funcs
@@ -390,6 +390,11 @@ class QiskitMainTransformer(ast.NodeTransformer):
 
         return self.generic_visit(node)
 
+    def visit_Call(self, node):
+        if self.in_main:
+            self._update_requirements_from_call(node)
+        return self.generic_visit(node)
+
     def visit_Assign(self, node):
         if not self.in_main:
             return node
@@ -494,6 +499,109 @@ class QiskitMainTransformer(ast.NodeTransformer):
             return node.value
         if isinstance(node, ast.Num):
             return node.n
+        return None
+
+    def _update_requirements_from_call(self, call_node):
+        if not isinstance(call_node, ast.Call):
+            return
+
+        method_name = ""
+        if isinstance(call_node.func, ast.Attribute):
+            method_name = call_node.func.attr
+
+        direct_qubit_arg_methods = {
+            'barrier', 'ch', 'cx', 'cy', 'cz', 'h', 'id', 'reset',
+            's', 'sdg', 'sx', 'sxdg', 'swap', 'tdg', 't', 'v', 'vdg', 'x', 'y', 'z',
+        }
+
+        if method_name in direct_qubit_arg_methods:
+            for arg in call_node.args:
+                self._update_requirements_from_index_node(arg, 'qr')
+
+        if method_name == 'measure':
+            if call_node.args:
+                self._update_requirements_from_index_node(call_node.args[0], 'qr')
+            if len(call_node.args) >= 2:
+                self._update_requirements_from_index_node(call_node.args[1], 'cr')
+
+        # Angle-first gates: the qubit arguments start after the leading angle.
+        if method_name in {'rx', 'ry', 'rz'}:
+            if len(call_node.args) >= 2:
+                self._update_requirements_from_index_node(call_node.args[1], 'qr')
+
+        if method_name in {'crx', 'cry', 'crz', 'cp'}:
+            if len(call_node.args) >= 3:
+                self._update_requirements_from_index_node(call_node.args[1], 'qr')
+                self._update_requirements_from_index_node(call_node.args[2], 'qr')
+
+        if method_name in {'rxx', 'ryy', 'rzz'}:
+            if len(call_node.args) >= 3:
+                self._update_requirements_from_index_node(call_node.args[1], 'qr')
+                self._update_requirements_from_index_node(call_node.args[2], 'qr')
+
+        if method_name == 'mcp':
+            for arg in call_node.args[1:]:
+                self._update_requirements_from_index_node(arg, 'qr')
+
+        # Methods where positional args include explicit qargs/cargs.
+        if method_name == 'if_test':
+            # Signature: if_test(condition, true_body=None, qubits=None, clbits=None, ...)
+            if len(call_node.args) >= 3:
+                self._update_requirements_from_index_node(call_node.args[2], 'qr')
+            if len(call_node.args) >= 4:
+                self._update_requirements_from_index_node(call_node.args[3], 'cr')
+
+            # Condition tuple can be (clbit, value). If clbit is a literal index,
+            # account for it as a required classical bit.
+            if call_node.args and isinstance(call_node.args[0], ast.Tuple) and call_node.args[0].elts:
+                self._update_requirements_from_index_node(call_node.args[0].elts[0], 'cr')
+
+        if method_name == 'append':
+            # Signature: append(instruction, qargs=None, cargs=None)
+            if len(call_node.args) >= 2:
+                self._update_requirements_from_index_node(call_node.args[1], 'qr')
+            if len(call_node.args) >= 3:
+                self._update_requirements_from_index_node(call_node.args[2], 'cr')
+
+        for kw in call_node.keywords:
+            if kw.arg == 'qubits' or kw.arg == 'qargs':
+                self._update_requirements_from_index_node(kw.value, 'qr')
+            if kw.arg == 'clbits' or kw.arg == 'cargs':
+                self._update_requirements_from_index_node(kw.value, 'cr')
+
+    def _update_requirements_from_index_node(self, node, container):
+        if container not in {'qr', 'cr'} or node is None:
+            return
+
+        required_size = self._get_required_size_from_index_node(node, container)
+        if required_size is None:
+            return
+
+        if container == 'qr':
+            self.max_qubits = max(self.max_qubits, required_size)
+        else:
+            self.max_clbits = max(self.max_clbits, required_size)
+
+    def _get_required_size_from_index_node(self, node, container):
+        if node is None:
+            return None
+
+        # Direct literal index.
+        idx = self._extract_int(node)
+        if idx is not None:
+            return idx + 1 if idx >= 0 else None
+
+        # Direct qr[..] / cr[..] access.
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+            if node.value.id == container:
+                return self._get_required_size_from_subscript(node.slice)
+
+        # Recurse into containers of indices.
+        if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+            sizes = [self._get_required_size_from_index_node(elt, container) for elt in node.elts]
+            sizes = [size for size in sizes if size is not None]
+            return max(sizes) if sizes else None
+
         return None
 
     def _get_required_size_from_subscript(self, slice_node):

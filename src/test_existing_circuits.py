@@ -138,13 +138,23 @@ def process_single_file(
     file_index: int,
 ) -> FileResult:
     filename = os.path.basename(file_path)
+    log_lines: List[str] = []
+
+    def log_line(message: str):
+        log_lines.append(message)
+
+    def flush_log():
+        if log_lines:
+            logger.log("\n".join(log_lines))
+            log_lines.clear()
 
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             code = f.read()
     except Exception as exc:
         err = f"Error reading {filename}: {exc}"
-        logger.log(err)
+        log_line(err)
+        flush_log()
         return FileResult(file_path=file_path, success=False, error=err, metrics={}, low_ks_test_levels=[])
 
     compile_error, compile_stdout, compilation_metrics, compilation_wrapped_code = compile_generated_program(
@@ -158,24 +168,26 @@ def process_single_file(
         "execution": {},
     }
 
-    logger.log(f"--- Processing {filename} ---")
-    logger.log(f"Metrics: {metrics}")
+    log_line(f"--- Processing {filename} ---")
+    log_line(f"Metrics: {metrics}")
 
     has_compile_error = bool(compile_error and compile_error.strip())
 
     if compile_stdout and not has_compile_error:
-        logger.log(f"Compile Output:\n{compile_stdout}")
+        log_line(f"Compile Output:\n{compile_stdout}")
 
     if verbose:
-        logger.log(f"Compilation Wrapped Code:\n{compilation_wrapped_code}")
+        log_line(f"Compilation Wrapped Code:\n{compilation_wrapped_code}")
 
     if has_compile_error:
         full_compile_error = (compilation_metrics or {}).get("error_full") or compile_error
-        logger.log(f"Compilation Error:\n{full_compile_error}")
+        log_line(f"Compilation Error:\n{full_compile_error}")
+        flush_log()
         return FileResult(file_path=file_path, success=False, error=compile_error, metrics=metrics, low_ks_test_levels=[])
 
     if compile_only:
-        logger.log("Status: success")
+        log_line("Status: success")
+        flush_log()
         return FileResult(file_path=file_path, success=True, error="", metrics=metrics, low_ks_test_levels=[])
 
     run_error, run_stdout, execution_metrics, runtime_wrapped_code = run_generated_program(
@@ -194,23 +206,24 @@ def process_single_file(
     if low_ks_test_levels:
         execution_metrics["low_ks_test_levels"] = low_ks_test_levels
         low_text = ", ".join([f"L{level}={value:.6g}" for level, value in low_ks_test_levels])
-        logger.log(f"LOW KS detected for {filename} (threshold={ks_low_threshold}): {low_text}")
+        log_line(f"LOW KS detected for {filename} (threshold={ks_low_threshold}): {low_text}")
 
     metrics["execution"] = execution_metrics
 
-    logger.log(f"Metrics: {metrics}")
+    log_line(f"Metrics: {metrics}")
 
     has_run_error = bool(run_error and run_error.strip())
 
     if run_stdout and not has_run_error:
-        logger.log(f"Run Output:\n{run_stdout}")
+        log_line(f"Run Output:\n{run_stdout}")
 
     if verbose:
-        logger.log(f"Runtime Wrapped Code:\n{runtime_wrapped_code}")
+        log_line(f"Runtime Wrapped Code:\n{runtime_wrapped_code}")
 
     if has_run_error:
         full_run_error = execution_metrics.get("error_full") or run_error
-        logger.log(f"Runtime Error:\n{full_run_error}")
+        log_line(f"Runtime Error:\n{full_run_error}")
+        flush_log()
         return FileResult(
             file_path=file_path,
             success=False,
@@ -219,7 +232,8 @@ def process_single_file(
             low_ks_test_levels=low_ks_test_levels,
         )
 
-    logger.log("Status: success")
+    log_line("Status: success")
+    flush_log()
     return FileResult(
         file_path=file_path,
         success=True,

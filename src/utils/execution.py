@@ -6,6 +6,7 @@ import time
 import json
 from typing import Any, Dict, Optional, Tuple
 from .utils import strip_markdown_syntax, parse_time_metrics
+import re
 from .ast_ops import (
     wrap_for_compilation_guppy,
     wrap_for_testing_guppy,
@@ -162,6 +163,18 @@ def _wrap_code_for_testing(clean_code: str, language: str, circuit_id: int) -> s
     return clean_code
 
 
+def _temp_file_prefix(source_file_path: str = None) -> str:
+    if not source_file_path:
+        return "quillfuzz_"
+
+    basename = os.path.basename(source_file_path)
+    stem, _ = os.path.splitext(basename)
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", stem).strip("._-")
+    if not cleaned:
+        cleaned = "source"
+    return f"quillfuzz_{cleaned}_"
+
+
 def _execute_python_code(
     program_code: str,
     timeout: int = DEFAULT_EXECUTION_TIMEOUT,
@@ -182,7 +195,7 @@ def _execute_python_code(
     
     try:
         # Create a temporary file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, dir='/tmp') as temp_file:
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', prefix=_temp_file_prefix(source_file_path), delete=False, dir='/tmp') as temp_file:
             temp_file.write(program_code)
             temp_file_path = temp_file.name
         
@@ -313,7 +326,7 @@ def run_coverage_on_file(file_path: str, source_package: str = None, verbose: bo
 
             wrapped_code = _wrap_code_for_compilation(code, language)
 
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, dir="/tmp") as temp_file:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".py", prefix=_temp_file_prefix(file_path), delete=False, dir="/tmp") as temp_file:
                 temp_file.write(wrapped_code)
                 temp_src_path = temp_file.name
         except Exception as e:
