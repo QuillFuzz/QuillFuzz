@@ -14,5 +14,4 @@ if [ ! -d "$ASSEMBLED_DIR" ]; then
     exit 1
 fi
 
-# After generation is complete and circuits are assembled, run the test_existing_circuits.py script to test assembled circuits
-python src/test_existing_circuits.py "$ASSEMBLED_DIR" --workers 4 --language qiskit
+echo "Generation and assembly complete. Interesting assembled files are in $ASSEMBLED_DIR"

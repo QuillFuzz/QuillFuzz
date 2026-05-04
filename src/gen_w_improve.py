@@ -398,8 +398,9 @@ def run_training_phase(model, args, common_run_dir, main_logfile_path):
             
     return best_prompt
 
-def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_path):
-    logger = Logger(logfile_path)
+def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_path, logger=None):
+    if logger is None:
+        logger = Logger(logfile_path)
     start_time = time.time()
     model_run_dir = common_run_dir
     gen_dir = os.path.join(model_run_dir, "generated")
@@ -563,14 +564,20 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
     
     return successful_files, summary, metrics, report_entries
 
-def assemble_circuits(model, files, args, base_dir):
+def assemble_circuits(model, files, args, base_dir, logger=None):
+    """
+    Assemble programs sampled from `files` (consider the full pool).
+    After creating each assembled candidate, execute it and keep the resulting
+    assembled file only when it is `interesting` (low KS or runtime error)
+    """
     out_dir = os.path.join(base_dir, "assembled")
     os.makedirs(out_dir, exist_ok=True)
     seen = set()
     count = 0
     pbar = tqdm(total=args.n_assemble, desc=f"Assembling {model}")
-    
     attempts = 0
+    metrics_rows = []
+    assembled_metrics = []
     while count < args.n_assemble and attempts < 1000:
         if not files:
             break
@@ -579,7 +586,6 @@ def assemble_circuits(model, files, args, base_dir):
         max_k = min(args.n_circuits_per_assembly, len(files))
         if max_k < 1:
             max_k = 1
-            
         k = random.randint(1, max_k)
         selection = tuple(random.sample(files, k))
         if selection in seen:
@@ -587,14 +593,122 @@ def assemble_circuits(model, files, args, base_dir):
             continue
         seen.add(selection)
         attempts = 0
-        
+
+        out_path = os.path.join(out_dir, f"{model.replace('/', '_')}_assembled_{count}.py")
+
         try:
-            assemble(list(selection), os.path.join(out_dir, f"{model.replace('/', '_')}_assembled_{count}.py"), count, args.language)
+            if logger:
+                logger.log(
+                    f"[Assembly {count + 1}/{args.n_assemble}] Building candidate from {len(selection)} source file(s): "
+                    f"{', '.join(os.path.basename(path) for path in selection)}"
+                )
+
+            assemble(list(selection), out_path, count, args.language)
+
+            # Read assembled source
+            try:
+                with open(out_path, 'r', encoding='utf-8') as f:
+                    assembled_code = f.read()
+            except Exception:
+                # Can't read assembled file; remove and skip
+                try:
+                    os.remove(out_path)
+                except Exception:
+                    pass
+                continue
+
+            # Run the assembled program to collect metrics and KS output
+            error, output, metrics, runtime_code = run_generated_program(
+                assembled_code, language=args.language, source_file_path=out_path, circuit_id=None
+            )
+            ks_results = extract_ks_test_results(output)
+            low_ks_values = find_low_ks_values(ks_results, args.ks_low_threshold) if ks_results else []
+            assembly_interesting = bool(low_ks_values) or (error and error.strip())
+
+            # Build and persist a metrics row for this assembled candidate so
+            # downstream tooling (reports/CSV) see the execution regardless of
+            # whether the assembled source is kept or deleted.
+            success = not (error and error.strip())
+            file_name = os.path.basename(out_path)
+
+            error_details = build_error_details([
+                {
+                    "error": metrics.get("error_summary") or summarize_errors([error]) if metrics else summarize_errors([error]),
+                    "error_full": metrics.get("error_full") if metrics else (error or ""),
+                }
+            ])
+
+            metrics_rows.append({
+                "model": model,
+                "file": file_name,
+                "success": success,
+                "coverage_percent": metrics.get("coverage_percent", 0.0) if metrics else 0.0,
+                **flatten_metrics_for_csv("compilation", metrics.get("compilation", {}) if metrics else {}),
+                **flatten_metrics_for_csv("execution", metrics if metrics else {}),
+            })
+
+            # Also collect structured metrics for plotting
+            metrics_for_plot = {"execution": metrics or {}, "compilation": {}}
+            assembled_metrics.append({
+                "model": model,
+                "metrics": metrics_for_plot,
+                "success": success,
+                "file": file_name,
+            })
+
+            if logger:
+                if error and error.strip():
+                    logger.log(f"{file_name} Assembly Runtime Error:\n{error}\n")
+                elif low_ks_values:
+                    low_text = ", ".join([f"L{level}={value:.6g}" for level, value in low_ks_values])
+                    logger.log(
+                        f"{file_name} LOW KS detected (threshold={args.ks_low_threshold}): {low_text}"
+                    )
+                else:
+                    logger.log(f"{file_name} assembled successfully but was uninteresting.")
+
+                if output:
+                    logger.log(f"--- {file_name} Output ---\n{output}\n--------------------------\n")
+
             count += 1
             pbar.update(1)
+
+            if not assembly_interesting:
+                try:
+                    os.remove(out_path)
+                except Exception:
+                    pass
+
         except Exception:
-            pass
+            try:
+                if os.path.exists(out_path):
+                    os.remove(out_path)
+            except Exception:
+                pass
+            continue
+
     pbar.close()
+    # Persist metrics rows collected for assembled runs so they appear in
+    # the common execution metrics CSV alongside generation runs.
+    try:
+        metrics_csv_path = os.path.join(base_dir, "assembled_execution_metrics.csv")
+        if metrics_rows:
+            append_rows_to_csv(metrics_csv_path, metrics_rows)
+            if logger:
+                logger.log(f"Saved {len(metrics_rows)} assembled run metrics to {metrics_csv_path}")
+    except Exception as e:
+        if logger:
+            logger.log(f"Warning: failed to append assembled metrics CSV: {e}")
+    # Return the list of assembled files and collected structured metrics
+    assembled_files = []
+    try:
+        for fname in sorted(os.listdir(out_dir)):
+            if fname.startswith(model.replace('/', '_') + "_assembled_") and fname.endswith('.py'):
+                assembled_files.append(os.path.join(out_dir, fname))
+    except Exception:
+        pass
+
+    return assembled_files, assembled_metrics
 
 def main():
     parser = argparse.ArgumentParser(description="LLM Circuit Generator")
@@ -668,6 +782,9 @@ def main():
     all_stats = []
     all_metrics = []
     all_reports = []
+    main_logger = Logger(logfile_path)
+    assembled_all_metrics = []
+    assembled_all_stats = []
 
     for model in args.models:
         # Train
@@ -679,19 +796,50 @@ def main():
              best_prompt = "generation_prompt.txt"
         
         # Produce
-        files, summary, metrics, report_entries = run_production_phase(model, best_prompt, args, common_run_dir, logfile_path)
+        files, summary, metrics, report_entries = run_production_phase(
+            model,
+            best_prompt,
+            args,
+            common_run_dir,
+            logfile_path,
+            main_logger,
+        )
         all_stats.append(summary)
         all_metrics.extend(metrics)
         all_reports.append({"model": model, "entries": report_entries})
 
         # Assemble
         if files:
-            assemble_circuits(model, files, args, common_run_dir)
+            assembly_logfile = os.path.join(common_run_dir, "assembly_execution.log")
+            assembly_logger = Logger(assembly_logfile)
+            assembled_files, assembled_metrics = assemble_circuits(model, files, args, common_run_dir, assembly_logger)
+
+            # Collect assembled metrics for cross-model plots
+            if assembled_metrics:
+                assembled_all_metrics.extend(assembled_metrics)
+                # Build a minimal summary for assembled results per model
+                total = len(assembled_metrics)
+                valid = sum(1 for m in assembled_metrics if m.get('success'))
+                assembled_all_stats.append({
+                    'model': model,
+                    'total_cost': 0.0,
+                    'total_time': 0.0,
+                    'total_programs': total,
+                    'valid_programs': valid,
+                    'avg_quality_score': 0.0,
+                })
 
     if all_stats:
         generate_summary_plot(all_stats, os.path.join(common_run_dir, "plots", "performance"))
     if all_metrics:
         generate_complexity_scatter_plots(all_metrics, os.path.join(common_run_dir, "plots", "complexity"))
+
+    # Plots for assembled circuits (separate folder)
+    if assembled_all_stats:
+        generate_summary_plot(assembled_all_stats, os.path.join(common_run_dir, "assembled_plots", "performance"))
+    if assembled_all_metrics:
+        # assembled_all_metrics is list of dicts with 'metrics' key already
+        generate_complexity_scatter_plots(assembled_all_metrics, os.path.join(common_run_dir, "assembled_plots", "complexity"))
 
     performance_summary_path = os.path.join(common_run_dir, "performance_summary.json")
     performance_summary = {
@@ -705,5 +853,18 @@ def main():
     with open(performance_summary_path, "w", encoding="utf-8") as f:
         json.dump(performance_summary, f, indent=2)
     print(f"Performance summary JSON: {performance_summary_path}")
+
+    # Generate JSON summary for assembled circuits
+    assembled_summary_path = os.path.join(common_run_dir, "assembled_performance_summary.json")
+    assembled_summary = {
+        "run_id": run_id,
+        "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "language": args.language,
+        "models": args.models,
+        "model_summaries": assembled_all_stats,
+    }
+    with open(assembled_summary_path, "w", encoding="utf-8") as f:
+        json.dump(assembled_summary, f, indent=2)
+    print(f"Assembled performance summary JSON: {assembled_summary_path}")
 if __name__ == "__main__":
     main()

@@ -13,5 +13,4 @@ if [ ! -d "$ASSEMBLED_DIR" ]; then
     exit 1
 fi
 
-# After generation is complete and circuits are assembled, run test_existing_circuits.py
-python src/test_existing_circuits.py "$ASSEMBLED_DIR" --workers 4 --language pytket
+echo "Generation and assembly complete. Interesting assembled files are in $ASSEMBLED_DIR"
