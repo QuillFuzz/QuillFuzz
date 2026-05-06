@@ -25,7 +25,9 @@ jobs:
 
       - name: Build Docker image and start container (non-root)
         run: |
-          UID=$(id -u) GID=$(id -g) docker compose up -d --build
+          HOST_UID=$(id -u)
+          HOST_GID=$(id -g)
+          UID=$HOST_UID GID=$HOST_GID docker compose up -d --build
         shell: bash
 
       - name: Run Guppy test
