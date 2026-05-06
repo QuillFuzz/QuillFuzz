@@ -25,14 +25,14 @@ jobs:
 
       - name: Build Docker image and start container (non-root)
         run: |
-          HOST_UID=$(id -u)
-          HOST_GID=$(id -g)
-          UID=$HOST_UID GID=$HOST_GID docker compose up -d --build
+          # Export UID/GID only for the `docker compose` command via env
+          env UID=$(id -u) GID=$(id -g) docker compose up -d --build
         shell: bash
 
       - name: Run Guppy test
         run: >
           docker compose run --rm
+          --user "$(id -u):$(id -g)"
           -e PYTHONPATH=/QuillFuzz/src
           quillfuzz
           python src/gen_w_improve.py
@@ -42,6 +42,7 @@ jobs:
       - name: Run Pytket test
         run: >
           docker compose run --rm
+          --user "$(id -u):$(id -g)"
           -e PYTHONPATH=/QuillFuzz/src
           quillfuzz
           python src/gen_w_improve.py
@@ -51,8 +52,14 @@ jobs:
       - name: Run Qiskit test
         run: >
           docker compose run --rm
+          --user "$(id -u):$(id -g)"
           -e PYTHONPATH=/QuillFuzz/src
           quillfuzz
           python src/gen_w_improve.py
           --config_file run_configs/qiskit_test_run_config.yaml
           --run_name ci_test_qiskit
+
+      - name: Teardown
+        if: always()
+        run: docker compose down --volumes --remove-orphans
+        shell: bash
