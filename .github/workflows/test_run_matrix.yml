@@ -13,8 +13,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build Docker image
-        run: docker compose build
+      - name: Create .env from repository secrets
+        run: |
+          cat > .env <<EOF
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+          DEEPSEEK_API_KEY=${{ secrets.DEEPSEEK_API_KEY }}
+          EOF
+        shell: bash
+
+      - name: Build Docker image and start container (non-root)
+        run: |
+          UID=$(id -u) GID=$(id -g) docker compose up -d --build
+        shell: bash
 
       - name: Run Guppy test
         run: >
