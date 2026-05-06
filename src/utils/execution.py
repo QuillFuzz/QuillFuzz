@@ -25,7 +25,7 @@ DEFAULT_REPORT_TIMEOUT = 60
 LANGUAGE_DEFAULT_SOURCES = {
     "guppy": "guppylang_internals",
     "qiskit": "qiskit",
-    "pytket": "tket",
+    "pytket": "pytket",
 }
 
 
