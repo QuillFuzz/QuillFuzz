@@ -8,13 +8,14 @@ models:
   - deepseek/deepseek-v4-flash
 
 # Number of programs to generate for each model
-n_programs: 2
+# Number of programs to generate for each model
+n_programs: 5000
 # Maximum number of fixing cycles to perform for each generated program
 n_fixing_cycles: 3
 # Number of parallel workers to use for generation and fixing
 max_workers: 10
 # Number of assembled programs to make for each model
-n_assemble: 2
+n_assemble: 50000
 # Maximum number of sub-programs per assembled program
 n_circuits_per_assembly: 2
 # Prints executed code for easier debugging. Warning: this will produce a lot of output
