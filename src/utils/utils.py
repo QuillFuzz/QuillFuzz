@@ -5,6 +5,10 @@ import numpy as np
 from tqdm import tqdm
 import re
 
+def sanitize_model_name(model: str) -> str:
+    """Convert model name to valid filename by replacing slashes."""
+    return model.replace('/', '_')
+
 def strip_markdown_syntax(code: str) -> str:
     """
     Extract Python code from markdown-like LLM responses.

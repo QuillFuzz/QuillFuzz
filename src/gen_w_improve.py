@@ -14,8 +14,8 @@ from tqdm import tqdm
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Import from local library
 from utils.circuit_assembler import assemble
-from utils.llm_client import ask_any_model, get_dynamic_prompt
-from utils.utils import save_text_to_file, generate_summary_plot, generate_complexity_scatter_plots
+from utils.llm_client import ask_any_model, get_dynamic_prompt, improve_prompt_logic
+from utils.utils import save_text_to_file, generate_summary_plot, generate_complexity_scatter_plots, sanitize_model_name
 from utils.execution import run_generated_program, compile_generated_program
 from utils.reporting import (
     Logger,
@@ -25,6 +25,7 @@ from utils.reporting import (
     append_rows_to_csv,
     build_error_details,
     summarize_errors,
+    build_metrics_row,
 )
 
 SUPPORTED_LANGUAGES = ("guppy", "qiskit", "pytket")
@@ -219,14 +220,19 @@ class ProgramProcessor:
 
         return current_code, last_failure_type
 
-    def process(self, generated_dir, failed_dir, prompt_filename="generation_prompt.txt", compile_only=False):
-        self.config.compile_only = compile_only # augment config temporarily
-        self.config.current_generated_dir = generated_dir
-
+    def _setup_failure_dirs(self, failed_dir):
+        """Create and return compile and runtime failure directories."""
         compile_fail_dir = os.path.join(failed_dir, "compile_fail")
         runtime_fail_dir = os.path.join(failed_dir, "runtime_fail")
         os.makedirs(compile_fail_dir, exist_ok=True)
         os.makedirs(runtime_fail_dir, exist_ok=True)
+        return compile_fail_dir, runtime_fail_dir
+
+    def process(self, generated_dir, failed_dir, prompt_filename="generation_prompt.txt", compile_only=False):
+        self.config.compile_only = compile_only # augment config temporarily
+        self.config.current_generated_dir = generated_dir
+
+        compile_fail_dir, runtime_fail_dir = self._setup_failure_dirs(failed_dir)
         
         code = self.generate(prompt_filename)
         if not code:
@@ -266,48 +272,8 @@ class ProgramProcessor:
             return None, self.stats, list(set(self.encountered_errors)), True
 
 
-def improve_prompt_logic(improver_model, prompt_path, common_prompt_dir, output_path, error_logs, language, logger=None, reasoning_effort="high"):
-    """
-    Analyzes errors and rewrites the prompt to improve generation.
-    """
-    if not os.path.exists(prompt_path):
-        if logger:
-            logger.log(f"Original prompt file not found at {prompt_path}. Skipping improvement.")
-        print(f"Original prompt file not found at {prompt_path}. Skipping improvement.")
-        sys.exit(1)
-
-    with open(prompt_path, 'r') as f:
-        original_content = f.read()
-
-    unique_errors = list(set(error_logs))[:10]  # Limit errors
-    errors_text = "\n---\n".join(unique_errors)
-    
-    template_path = os.path.join(common_prompt_dir, "prompt_improvement_template.txt")
-    if not os.path.exists(template_path):
-        raise FileNotFoundError(f"Prompt improvement template missing at {template_path}")
-        
-    meta_prompt = get_dynamic_prompt(template_path, language=language, original_content=original_content, errors_text=errors_text)
-    
-    print(f"\n[Training] requesting prompt improvement from {improver_model}...")
-    improved_content, _, err = ask_any_model(improver_model, meta_prompt, reasoning_effort=reasoning_effort)
-    
-    if improved_content:
-        with open(output_path, 'w') as f:
-            f.write(improved_content)
-        
-        if logger:
-            logger.log(f"\n--- Improved Prompt Content ({time.ctime()}) ---\n{improved_content}\n-----------------------------------------------\n")
-
-        print(f"[Training] Improved prompt saved to {output_path}")
-        return output_path
-    else:
-        print(f"[Training] Failed to improve prompt: {err}")
-        return prompt_path
-
 def run_training_phase(model, args, common_run_dir, main_logfile_path):
-    # Main logger for high-level info if needed, but we'll use per-round logs
-    # logger = Logger(main_logfile_path) 
-    
+    """Run the training phase to improve generation prompts."""
     prompt_filename = "generation_prompt.txt"
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir)
@@ -322,7 +288,8 @@ def run_training_phase(model, args, common_run_dir, main_logfile_path):
 
     for round_idx in range(max_rounds + 1):
         # Setup directories
-        round_dir = os.path.join(common_run_dir, "training_phase", model.replace('/', '_'), f"round_{round_idx}")
+        model_name = sanitize_model_name(model)
+        round_dir = os.path.join(common_run_dir, "training_phase", model_name, f"round_{round_idx}")
         t_gen_dir = os.path.join(round_dir, "generated")
         t_fail_dir = os.path.join(round_dir, "failed")
         os.makedirs(t_gen_dir, exist_ok=True)
@@ -402,9 +369,9 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
     if logger is None:
         logger = Logger(logfile_path)
     start_time = time.time()
-    model_run_dir = common_run_dir
-    gen_dir = os.path.join(model_run_dir, "generated")
-    fail_dir = os.path.join(model_run_dir, "failed_programs")
+    model_name = sanitize_model_name(model)
+    gen_dir = os.path.join(common_run_dir, "generated")
+    fail_dir = os.path.join(common_run_dir, "failed_programs")
     os.makedirs(gen_dir, exist_ok=True)
     os.makedirs(fail_dir, exist_ok=True)
 
@@ -424,7 +391,6 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
     except Exception as e:
         logger.log(f"Could not read prompt file for verbose logging: {e}")
 
-    successful_files = []
     stats_list = []
     metrics_rows = []
     report_entries = []
@@ -448,46 +414,37 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
                 execution_metrics = stats.metrics.get("execution", {}) if stats else {}
                 compilation_metrics = stats.metrics.get("compilation", {}) if stats else {}
                 low_ks_values = execution_metrics.get("low_ks_test_levels", []) if execution_metrics else []
-                error_details = build_error_details([
-                    {
-                        "error": execution_metrics.get("error_summary")
-                        or compilation_metrics.get("error_summary")
-                        or summarize_errors(errors),
-                        "error_full": execution_metrics.get("error_full")
-                        or compilation_metrics.get("error_full")
-                        or "\n\n---\n\n".join(errors),
-                    }
-                ])
                 file_name = os.path.basename(save_path) if save_path else source_filename
+                success = bool(save_path)
+                
+                error_details = build_error_details(
+                    [{
+                        "error": execution_metrics.get("error_summary")
+                            or compilation_metrics.get("error_summary")
+                            or summarize_errors(errors),
+                        "error_full": execution_metrics.get("error_full")
+                            or compilation_metrics.get("error_full")
+                            or "\n\n---\n\n".join(errors),
+                    }]
+                )
+                
                 report_entries.append({
                     "file": file_name,
-                    "success": bool(save_path),
+                    "success": success,
                     "coverage_percent": execution_metrics.get("coverage_percent", 0.0) if execution_metrics else 0.0,
                     "low_ks_test_levels": low_ks_values,
                     "error": error_details["error"],
                     "error_full": error_details["error_full"],
                 })
 
-                metrics_rows.append({
-                    "model": model,
-                    "file": file_name,
-                    "success": bool(save_path),
-                    "coverage_percent": execution_metrics.get("coverage_percent", 0.0) if execution_metrics else 0.0,
-                    **flatten_metrics_for_csv("compilation", compilation_metrics),
-                    **flatten_metrics_for_csv("execution", execution_metrics),
-                })
-
-                if save_path:
-                    successful_files.append(save_path)
+                metrics_rows.append(build_metrics_row(
+                    model, file_name, success, execution_metrics, compilation_metrics
+                ))
             except Exception as e:
                 logger.log(f"Error: {e}")
                 source_filename = futures[future]
-                error_details = build_error_details([
-                    {
-                        "error": str(e),
-                        "error_full": str(e),
-                    }
-                ])
+                error_details = build_error_details([{"error": str(e), "error_full": str(e)}])
+                
                 report_entries.append({
                     "file": source_filename,
                     "success": False,
@@ -496,12 +453,7 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
                     "error": error_details["error"],
                     "error_full": error_details["error_full"],
                 })
-                metrics_rows.append({
-                    "model": model,
-                    "file": source_filename,
-                    "success": False,
-                    "coverage_percent": 0.0,
-                })
+                metrics_rows.append(build_metrics_row(model, source_filename, False, {}, {}))
 
     metrics_csv_path = os.path.join(os.path.dirname(logfile_path), "execution_metrics.csv")
     append_rows_to_csv(metrics_csv_path, metrics_rows)
@@ -512,26 +464,28 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
     total_time = time.time() - start_time
     total_cost = sum(s.cost for s in stats_list)
     quality_scores = [s.quality_score for s in stats_list if s.quality_score is not None]
-    avg_quality = sum(quality_scores)/len(quality_scores) if quality_scores else 0
+    avg_quality = sum(quality_scores) / len(quality_scores) if quality_scores else 0
     
     total_prompt_tokens = sum(s.prompt_tokens for s in stats_list)
     total_completion_tokens = sum(s.completion_tokens for s in stats_list)
     total_tokens = sum(s.total_tokens for s in stats_list)
-    avg_time_per_valid = total_time / len(successful_files) if successful_files else 0
-    successful_coverages = [
-        float(entry.get("coverage_percent", 0.0) or 0.0)
-        for entry in report_entries
-        if entry.get("success")
-    ]
+    
+    successful_entries = [e for e in report_entries if e.get("success")]
+    avg_time_per_valid = total_time / len(successful_entries) if successful_entries else 0
+    
+    successful_coverages = [float(e.get("coverage_percent", 0.0) or 0.0) for e in successful_entries]
     avg_coverage_percent = sum(successful_coverages) / len(successful_coverages) if successful_coverages else 0.0
-    low_ks_file_count = sum(1 for entry in report_entries if entry.get("low_ks_test_levels"))
+    
+    low_ks_file_count = sum(1 for e in report_entries if e.get("low_ks_test_levels"))
 
+    valid_count = len(successful_entries)
+    
     summary_log = f"""
 ============================================================
   PERFORMANCE SUMMARY for {model}
 ------------------------------------------------------------
   Target Number of Programs : {args.n_programs}
-  Total Valid Programs     : {len(successful_files)}
+  Total Valid Programs     : {valid_count}
   Total Time Taken         : {total_time:.2f} seconds
   Avg Time per Valid Prog  : {avg_time_per_valid:.2f} seconds
   Avg Quality Score        : {avg_quality:.4f}
@@ -543,14 +497,13 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
 ============================================================
 """
     logger.log(summary_log)
-
     summary = {
         "model": model,
         "total_cost": total_cost,
         "total_time": total_time,
         "total_programs": args.n_programs,
-        "valid_programs": len(successful_files),
-        "failed_programs": max(0, args.n_programs - len(successful_files)),
+        "valid_programs": valid_count,
+        "failed_programs": max(0, args.n_programs - valid_count),
         "avg_quality_score": avg_quality,
         "avg_coverage_percent": avg_coverage_percent,
         "low_ks_file_count": low_ks_file_count,
@@ -562,6 +515,8 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
 
     metrics = [{'model': model, 'metrics': s.metrics} for s in stats_list if s.metrics]
     
+    # Return list of successful files for assembly phase
+    successful_files = [e["file"] for e in successful_entries if e.get("file")]
     return successful_files, summary, metrics, report_entries
 
 def assemble_circuits(model, files, args, base_dir, logger=None):
@@ -572,6 +527,7 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
     """
     out_dir = os.path.join(base_dir, "assembled")
     os.makedirs(out_dir, exist_ok=True)
+    model_name = sanitize_model_name(model)
     seen = set()
     count = 0
     pbar = tqdm(total=args.n_assemble, desc=f"Assembling {model}")
@@ -594,7 +550,7 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
         seen.add(selection)
         attempts = 0
 
-        out_path = os.path.join(out_dir, f"{model.replace('/', '_')}_assembled_{count}.py")
+        out_path = os.path.join(out_dir, f"{model_name}_assembled_{count}.py")
 
         try:
             if logger:
@@ -630,22 +586,19 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
             # whether the assembled source is kept or deleted.
             success = not (error and error.strip())
             file_name = os.path.basename(out_path)
+            execution_metrics = metrics or {}
+            compilation_metrics = execution_metrics.get("compilation", {}) if metrics else {}
 
-            error_details = build_error_details([
-                {
-                    "error": metrics.get("error_summary") or summarize_errors([error]) if metrics else summarize_errors([error]),
-                    "error_full": metrics.get("error_full") if metrics else (error or ""),
-                }
-            ])
+            error_details = build_error_details(
+                [{
+                    "error": execution_metrics.get("error_summary") or summarize_errors([error]),
+                    "error_full": execution_metrics.get("error_full") or (error or ""),
+                }]
+            )
 
-            metrics_rows.append({
-                "model": model,
-                "file": file_name,
-                "success": success,
-                "coverage_percent": metrics.get("coverage_percent", 0.0) if metrics else 0.0,
-                **flatten_metrics_for_csv("compilation", metrics.get("compilation", {}) if metrics else {}),
-                **flatten_metrics_for_csv("execution", metrics if metrics else {}),
-            })
+            metrics_rows.append(build_metrics_row(
+                model, file_name, success, execution_metrics, compilation_metrics
+            ))
 
             # Also collect structured metrics for plotting
             metrics_for_plot = {"execution": metrics or {}, "compilation": {}}
@@ -702,8 +655,9 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
     # Return the list of assembled files and collected structured metrics
     assembled_files = []
     try:
+        prefix = model_name + "_assembled_"
         for fname in sorted(os.listdir(out_dir)):
-            if fname.startswith(model.replace('/', '_') + "_assembled_") and fname.endswith('.py'):
+            if fname.startswith(prefix) and fname.endswith('.py'):
                 assembled_files.append(os.path.join(out_dir, fname))
     except Exception:
         pass
@@ -797,12 +751,7 @@ def main():
         
         # Produce
         files, summary, metrics, report_entries = run_production_phase(
-            model,
-            best_prompt,
-            args,
-            common_run_dir,
-            logfile_path,
-            main_logger,
+            model, best_prompt, args, common_run_dir, logfile_path, main_logger
         )
         all_stats.append(summary)
         all_metrics.extend(metrics)
@@ -812,7 +761,9 @@ def main():
         if files:
             assembly_logfile = os.path.join(common_run_dir, "assembly_execution.log")
             assembly_logger = Logger(assembly_logfile)
-            assembled_files, assembled_metrics = assemble_circuits(model, files, args, common_run_dir, assembly_logger)
+            assembled_files, assembled_metrics = assemble_circuits(
+                model, files, args, common_run_dir, assembly_logger
+            )
 
             # Collect assembled metrics for cross-model plots
             if assembled_metrics:

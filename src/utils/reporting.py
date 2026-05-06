@@ -8,6 +8,17 @@ from typing import Any, Dict, List, Optional, Tuple
 
 KS_TEST_PATTERN = re.compile(r"Optimisation level\s+(\d+)\s+ks-test p-value:\s*([0-9eE+\-.]+)")
 
+def build_metrics_row(model: str, file_name: str, success: bool, execution_metrics: Dict[str, Any], compilation_metrics: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a single metrics row for CSV export."""
+    return {
+        "model": model,
+        "file": file_name,
+        "success": success,
+        "coverage_percent": execution_metrics.get("coverage_percent", 0.0) if execution_metrics else 0.0,
+        **flatten_metrics_for_csv("compilation", compilation_metrics or {}),
+        **flatten_metrics_for_csv("execution", execution_metrics or {}),
+    }
+
 
 class Logger:
     def __init__(self, logfile_path: str):
