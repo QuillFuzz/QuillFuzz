@@ -1,0 +1,44 @@
+name: Run Test Runs
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test-runs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker compose build
+
+      - name: Run Guppy test
+        run: >
+          docker compose run --rm
+          -e PYTHONPATH=/QuillFuzz/src
+          quillfuzz
+          python src/gen_w_improve.py
+          --config_file run_configs/guppy_test_run_config.yaml
+          --run_name ci_test_guppy
+
+      - name: Run Pytket test
+        run: >
+          docker compose run --rm
+          -e PYTHONPATH=/QuillFuzz/src
+          quillfuzz
+          python src/gen_w_improve.py
+          --config_file run_configs/pytket_test_run_config.yaml
+          --run_name ci_test_pytket
+
+      - name: Run Qiskit test
+        run: >
+          docker compose run --rm
+          -e PYTHONPATH=/QuillFuzz/src
+          quillfuzz
+          python src/gen_w_improve.py
+          --config_file run_configs/qiskit_test_run_config.yaml
+          --run_name ci_test_qiskit

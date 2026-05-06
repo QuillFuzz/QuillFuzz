@@ -1,4 +1,5 @@
 # User defined
+.claude/
 .vscode
 build
 outputs

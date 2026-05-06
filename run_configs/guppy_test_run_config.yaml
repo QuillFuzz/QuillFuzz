@@ -1,0 +1,27 @@
+# Language of testing
+language: guppy
+# LLM models to use for generation of quantum programs
+models:
+  - deepseek/deepseek-v4-flash
+
+# Number of programs to generate for each model
+n_programs: 2
+# Maximum number of fixing cycles to perform for each generated program
+n_fixing_cycles: 3
+# Number of parallel workers to use for generation and fixing
+max_workers: 10
+# Number of assembled programs to make for each model
+n_assemble: 2
+# Maximum number of sub-programs per assembled program
+n_circuits_per_assembly: 2
+# Prints executed code for easier debugging. Warning: this will produce a lot of output
+verbose: false
+# Reasoning effort of model to generate program
+reasoning_effort: high
+# Threshold for KS test to detect miscompilation.
+ks_low_threshold: 0.001
+
+
+# Improvement loop parameters for improving prompt before mass generation
+improve_prompt: false
+improver_model: deepseek/deepseek-v4-pro
