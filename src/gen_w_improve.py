@@ -394,6 +394,7 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
     stats_list = []
     metrics_rows = []
     report_entries = []
+    successful_files = []
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_workers) as executor:
         futures = {}
@@ -436,6 +437,9 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
                     "error": error_details["error"],
                     "error_full": error_details["error_full"],
                 })
+
+                if success and save_path:
+                    successful_files.append(os.path.abspath(save_path))
 
                 metrics_rows.append(build_metrics_row(
                     model, file_name, success, execution_metrics, compilation_metrics
@@ -516,7 +520,6 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
     metrics = [{'model': model, 'metrics': s.metrics} for s in stats_list if s.metrics]
     
     # Return list of successful files for assembly phase
-    successful_files = [e["file"] for e in successful_entries if e.get("file")]
     return successful_files, summary, metrics, report_entries
 
 def assemble_circuits(model, files, args, base_dir, logger=None):
