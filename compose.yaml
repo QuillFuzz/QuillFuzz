@@ -1,7 +1,7 @@
 services:
   quillfuzz:
     build: .
-    user: "${UID:-1000}:${GID:-1000}"
+    user: "${USER_ID:-1000}:${GROUP_ID:-1000}"
     volumes:
       # Mount current directory to /QuillFuzz inside container
       - .:/QuillFuzz

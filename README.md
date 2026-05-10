@@ -11,7 +11,7 @@ QuillFuzz can be run with Docker Compose, Docker, or Podman. The container is ke
 Recommended when Compose is available:
 
 ```bash
-UID=$(id -u) GID=$(id -g) docker compose up -d --build
+USER_ID=$(id -u) GROUP_ID=$(id -g) docker compose up -d --build
 docker compose exec quillfuzz /bin/bash
 ```
 
