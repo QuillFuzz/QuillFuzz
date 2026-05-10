@@ -221,6 +221,10 @@ def process_single_file(
         log_line(f"Runtime Wrapped Code:\n{runtime_wrapped_code}")
 
     if has_run_error:
+        # Log test harness stdout if verbose
+        if verbose:
+            log_line(f"Test Harness Output:\n{run_stdout}\n")
+
         full_run_error = execution_metrics.get("error_full") or run_error
         log_line(f"Runtime Error:\n{full_run_error}")
         flush_log()

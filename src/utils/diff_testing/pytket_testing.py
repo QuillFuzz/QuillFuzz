@@ -27,6 +27,7 @@ class pytketTesting(Base):
     def __init__(self):
         super().__init__()
 
+    # Update this for list of passes to test
     def _curated_pass_registry(self) -> Dict[str, Callable[[], BasePass]]:
         return {
             "RemoveRedundancies": RemoveRedundancies,
@@ -44,88 +45,13 @@ class pytketTesting(Base):
             "FlattenRegisters": FlattenRegisters,
         }
 
-    def _discover_zero_arg_passes(self) -> Dict[str, Callable[[], BasePass]]:
-        discovered: Dict[str, Callable[[], BasePass]] = {}
-        for name, obj in globals().items():
-            if name.startswith("_") or not inspect.isclass(obj) or not issubclass(obj, BasePass):
-                continue
-            if name in {"BasePass", "SequencePass", "RepeatPass", "RepeatUntilSatisfiedPass", "RepeatWithMetricPass"}:
-                continue
-
-            try:
-                sig = inspect.signature(obj)
-            except (TypeError, ValueError):
-                continue
-
-            if any(param.default is inspect.Parameter.empty and param.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD) for param in sig.parameters.values()):
-                continue
-
-            discovered[name] = (lambda cls=obj: cls())
-
-        return discovered
-
-    def _get_selected_passes(
-        self,
-        mode: str,
-        include_passes: Optional[List[str]],
-        exclude_passes: Optional[List[str]],
-        random_n: Optional[int],
-        random_source: str,
-        seed: Optional[int],
-    ) -> List[Tuple[str, Callable[[], BasePass]]]:
+    def _get_selected_passes(self, random_n: Optional[int]) -> List[Tuple[str, Callable[[], BasePass]]]:
+        
         curated = self._curated_pass_registry()
-        exhaustive = self._discover_zero_arg_passes()
-        mode_normalized = mode.lower().strip()
-        source_normalized = random_source.lower().strip()
+        selected = dict(curated)
 
-        if mode_normalized == "curated":
-            selected = dict(curated)
-        elif mode_normalized == "exhaustive":
-            selected = dict(exhaustive)
-        elif mode_normalized == "both":
-            selected = dict(exhaustive)
-            selected.update(curated)
-        elif mode_normalized == "random_n":
-            if source_normalized == "curated":
-                pool = dict(curated)
-            elif source_normalized == "exhaustive":
-                pool = dict(exhaustive)
-            elif source_normalized == "both":
-                pool = dict(exhaustive)
-                pool.update(curated)
-            else:
-                raise ValueError(f"Unsupported random_source '{random_source}'. Use curated/exhaustive/both.")
-
-            if random_n is None:
-                random_n = 1
-            if random_n <= 0:
-                raise ValueError("random_n must be > 0 for random_n mode")
-
-            pool_items = list(pool.items())
-            if not pool_items:
-                return []
-
-            if random_n > len(pool_items):
-                print(f"Requested random_n={random_n}, clamping to available pass count={len(pool_items)}")
-                random_n = len(pool_items)
-
-            if seed is None:
-                seed = random.SystemRandom().randint(0, 2**31 - 1)
-            print(f"Random pass seed: {seed}")
-
-            rng = random.Random(seed)
-            selected = dict(rng.sample(pool_items, random_n))
-            print("Randomly selected passes:", ", ".join(selected.keys()))
-        else:
-            raise ValueError(f"Unsupported mode '{mode}'. Use curated/exhaustive/both/random_n.")
-
-        if include_passes:
-            include_set = set(include_passes)
-            selected = {name: factory for name, factory in selected.items() if name in include_set}
-
-        if exclude_passes:
-            exclude_set = set(exclude_passes)
-            selected = {name: factory for name, factory in selected.items() if name not in exclude_set}
+        if random_n is not None:
+            selected = dict(random.sample(list(selected.items()), min(random_n, len(selected))))
 
         return list(selected.items())
 
@@ -157,12 +83,7 @@ class pytketTesting(Base):
         self,
         circuit: Circuit,
         circuit_number: int,
-        mode: str = "curated",
         random_n: Optional[int] = None,
-        random_source: str = "curated",
-        include_passes: Optional[List[str]] = None,
-        exclude_passes: Optional[List[str]] = None,
-        seed: Optional[int] = None,
         shots: int = 10000,
     ) -> float:
         ks_value = 1.0
@@ -173,8 +94,8 @@ class pytketTesting(Base):
             baseline_handle = backend.process_circuit(baseline_circ, n_shots=shots)
             baseline_result = backend.get_result(baseline_handle)
             counts1 = self.preprocess_counts(baseline_result.get_counts())
-            selected_passes = self._get_selected_passes(mode, include_passes, exclude_passes, random_n, random_source, seed)
 
+            selected_passes = self._get_selected_passes(random_n)
             if not selected_passes:
                 print("No passes selected for ks_diff_test; returning baseline p-value 1.0")
                 return ks_value
@@ -210,12 +131,7 @@ class pytketTesting(Base):
         self,
         circuit: Any,
         circuit_number: int,
-        mode: str = "curated",
         random_n: Optional[int] = None,
-        random_source: str = "curated",
-        include_passes: Optional[List[str]] = None,
-        exclude_passes: Optional[List[str]] = None,
-        seed: Optional[int] = None,
         shots: int = 1000,
     ) -> float:
         ks_value = 1.0
@@ -253,7 +169,7 @@ class pytketTesting(Base):
                 print("No baseline counts generated for ks_diff_test_tket2.")
                 return ks_value
 
-            selected_passes = self._get_selected_passes(mode, include_passes, exclude_passes, random_n, random_source, seed)
+            selected_passes = self._get_selected_passes(random_n)
             if not selected_passes:
                 print("No passes selected for ks_diff_test_tket2; returning baseline p-value 1.0")
                 return ks_value
@@ -311,6 +227,7 @@ class pytketTesting(Base):
         except Exception:
             print("Exception :", traceback.format_exc())
 
+    # Convert pytket circuit to guppy, run in guppy, and compare results with pytket ran in Aer Simulator
     def run_guppy_pytket_diff(self, circuit: Circuit, circuit_number: int, qubit_defs_list: list[int], bit_defs_list: list[int]) -> None:
         pytket_circ_copy = circuit.copy()
         from pytket import OpType

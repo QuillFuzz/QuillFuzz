@@ -151,6 +151,10 @@ class ProgramProcessor:
         self.stats.execution_quality_score = metrics.get('quality_score', 0.0)
 
         if error.strip():
+            # Log test harness stdout if verbose
+            if self.config.verbose:
+                self.log(f"Test Harness Output:\n{output}\n")
+                
             full_error = metrics.get("error_full") or error
             self.log(f"{self.filename} Runtime Error:\n{full_error}\n")
             self.encountered_errors.append(f"Runtime Error:\n{error}")

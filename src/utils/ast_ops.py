@@ -311,10 +311,7 @@ def wrap_for_testing_pytket(
     code: str,
     circuit_id: int = 0,
     use_tket2: bool = False,
-    mode: str = "curated",
     random_n: int | None = None,
-    random_source: str = "curated",
-    seed: int | None = None,
 ) -> str:
     try:
         tree = ast.parse(code)
@@ -335,13 +332,8 @@ def wrap_for_testing_pytket(
     import_stmt = "from src.utils.diff_testing import pytketTesting\n"
 
     pass_args = [
-        f"mode={mode!r}",
-        f"random_source={random_source!r}",
+        f"random_n={random_n}"
     ]
-    if random_n is not None:
-        pass_args.append(f"random_n={random_n}")
-    if seed is not None:
-        pass_args.append(f"seed={seed}")
 
     method_name = "ks_diff_test_tket2" if use_tket2 else "ks_diff_test"
 
