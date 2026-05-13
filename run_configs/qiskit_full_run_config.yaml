@@ -6,7 +6,13 @@ models:
   
 n_programs: 5000
 n_fixing_cycles: 2
-max_workers: 10
+# Enable the mutation stage after generation
+enable_mutation: false
+# Number of mutation candidates to produce when mutation is enabled
+n_mutations: 0
+# Maximum number of fixing cycles to perform for each mutation
+mutation_fix_cycles: 1
+max_workers: 15
 n_assemble: 50000
 n_circuits_per_assembly: 2
 verbose: false
