@@ -29,7 +29,7 @@ class guppyTesting(Base):
             "PeepholeOptimise2Q": PeepholeOptimise2Q,
             "FullPeepholeOptimise": FullPeepholeOptimise,
             "SynthesiseTket": SynthesiseTket,
-            "RemoveBarriers": RemoveBarriers,
+            # "RemoveBarriers": RemoveBarriers,
             "RemovePhaseOps": RemovePhaseOps,
             "SquashTK1": SquashTK1,
             "DecomposeMultiQubitsCX": DecomposeMultiQubitsCX,
