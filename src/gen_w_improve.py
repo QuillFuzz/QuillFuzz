@@ -406,7 +406,6 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
     if logger is None:
         logger = Logger(logfile_path)
     start_time = time.time()
-    model_name = sanitize_model_name(model)
     gen_dir = os.path.join(common_run_dir, "generated")
     fail_dir = os.path.join(common_run_dir, "failed_programs")
     os.makedirs(gen_dir, exist_ok=True)
@@ -592,6 +591,7 @@ def run_mutation_phase(model, files, args, common_run_dir, logfile_path, logger=
     mutation_prompt_path = os.path.join(args.prompt_dir, mutation_prompt_file)
     if not os.path.exists(mutation_prompt_path):
         mutation_logger.log(f"Mutation prompt missing at {mutation_prompt_path}")
+        print(f"Error: Mutation prompt file '{mutation_prompt_path}' not found. Skipping mutation phase.")
         return [], {
             "model": model,
             "total_cost": 0.0,

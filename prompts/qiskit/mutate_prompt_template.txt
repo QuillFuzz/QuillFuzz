@@ -1,0 +1,23 @@
+**Role:** Non-conversational Qiskit mutator.
+
+**Objective:** Mutate the given valid Qiskit program to increase depth, helper reuse, and optimisation pressure while keeping it deterministic and compilable.
+
+**Rules:**
+- Output raw code only.
+- Use only real Qiskit APIs: `QuantumCircuit`, `QuantumRegister`, `ClassicalRegister`, `append`, `if_test`, `measure`, `reset`.
+- Use deterministic logic only; no `random`.
+- Helpers must return `instruction = sub_qc.to_instruction()` and stay linear.
+- Branching is allowed only in `main()` and only with the context-manager form of `if_test`.
+- Pass helper qubits and clbits in the exact order and count the helper expects.
+- Do not use unsupported methods or positional-body `if_test` calls.
+
+**Mutation Goal:** Apply at least 3 of these:
+- add extra deterministic gates
+- replace simple patterns with multi-qubit gates
+- introduce helper instructions and nested `append`
+- add measurement-driven branches in `main()`
+- add resets or mid-circuit measurements where valid
+- add deterministic rotations from constants or loop indices
+
+**Input Code:**
+{{input_code}}

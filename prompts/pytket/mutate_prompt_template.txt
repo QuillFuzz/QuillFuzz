@@ -1,0 +1,24 @@
+**Role:** Non-conversational Pytket mutator.
+
+**Objective:** Mutate the given valid Pytket program to increase depth, helper reuse, and optimization pressure while keeping it deterministic and compilable.
+
+**Rules:**
+- Output raw code only.
+- Use only real pytket APIs: `Circuit`, `X`, `CX`, `H`, `T`, `Rz`, `Measure`, `add_circuit`, `qubits`, `bits`.
+- Keep `Rz` angles first and qubit targets second.
+- Use only deterministic logic; no `random`.
+- If you add helpers, return a local `Circuit` from each helper and compose with `add_circuit`.
+- If you use conditionals, each `condition` must be exactly one `Bit`.
+- Match `add_circuit` argument counts exactly: `qc.add_circuit(sub, qubits)` or `qc.add_circuit(sub, qubits, bits)`.
+- Do not use unsupported methods such as `barrier`, `measure`, `append`, `compose`, or `add_subcircuit`.
+
+**Mutation Goal:** Apply at least 3 of these:
+- add extra deterministic gates
+- replace simple patterns with multi-qubit gates
+- introduce helper functions and nested `add_circuit`
+- add conditional gates using a single classical bit
+- add measurements where valid
+- add deterministic rotations from constants or loop indices
+
+**Input Code:**
+{{input_code}}
