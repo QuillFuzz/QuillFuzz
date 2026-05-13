@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import tempfile
 import concurrent.futures
 import random
 import argparse
@@ -30,12 +31,6 @@ from utils.reporting import (
 
 SUPPORTED_LANGUAGES = ("guppy", "qiskit", "pytket")
 DEFAULT_LANGUAGE = "guppy"
-PROMPTS_ROOT_DIRNAME = "prompts"
-PROMPT_TEMPLATE_DIRS = {
-    "guppy": "guppy",
-    "qiskit": "qiskit",
-    "pytket": "pytket",
-}
 
 @dataclass
 class GenerationStats:
@@ -59,49 +54,50 @@ class GenerationStats:
 
 
 class ProgramProcessor:
-    def __init__(self, index, model, config, logger, start_time):
+    def __init__(self, index, model, config, logger, start_time, stage="generation"):
         self.index = index
         self.model = model
         self.config = config
         self.logger = logger
         self.start_time = start_time
-        self.filename = f"{model.replace('/', '_')}output{index+1}.py"
+        self.stage = stage
+        self.filename = f"{sanitize_model_name(self.model)}_{self.stage}output{self.index+1}.py"
         self.stats = GenerationStats()
         self.encountered_errors = []
 
-    @property
-    def elapsed(self):
-        return f"[Elapsed: {time.time() - self.start_time:.2f}s]"
+    def generate(self, prompt_filename, prompt_kwargs=None):
+        
+        # Prepare prompts for asking model
+        prompt_kwargs = prompt_kwargs or {}
+        prompt_path = prompt_filename if os.path.isabs(prompt_filename) else os.path.join(self.config.prompt_dir, prompt_filename)
 
-    def log(self, msg):
-        self.logger.log(msg)
-
-    def generate(self, prompt_filename):
-        if os.path.isabs(prompt_filename):
-            prompt_path = prompt_filename
-        else:
-            prompt_path = os.path.join(self.config.prompt_dir, prompt_filename)
-            
         if not os.path.exists(prompt_path):
-            self.log(f"Generation prompt not found at {prompt_path}")
+            self.logger.log(f"{self.stage.capitalize()} prompt not found at {prompt_path}")
+            return None
+        
+        prompt = get_dynamic_prompt(prompt_path, **prompt_kwargs)
+
+        if prompt is None:
+            self.logger.log(f"Error: Prompt for {self.filename} is empty.\n")
             return None
 
-        prompt = get_dynamic_prompt(prompt_path)
-        # Pass reasoning_effort from config
+        # Sends prompt to model and gets back generated code, stats on cost and tokens used as well as any errors
         code, stats, err = ask_any_model(self.model, prompt, reasoning_effort=self.config.reasoning_effort)
         
         if code is None:
-            self.log(f"Failed to generate {self.filename}. Error: {err}\n")
+            self.logger.log(f"Failed to generate {self.filename}. Error: {err}\n")
             self.encountered_errors.append(f"Generation API Error: {err}")
             return None
 
         self.stats.update(stats)
-        self.log(f"{self.filename} Generation Cost: ${stats.get('cost', 0.0):.6f} | "
-                 f"Tokens (In/Out/Total): {stats.get('prompt_tokens', 0)}/{stats.get('completion_tokens', 0)}/{stats.get('total_tokens', 0)}")
+        self.logger.log(f"{self.filename} Generation Cost: ${stats.get('cost', 0.0):.6f} | "
+                         f"Tokens (In/Out/Total): {stats.get('prompt_tokens', 0)}/{stats.get('completion_tokens', 0)}/{stats.get('total_tokens', 0)}")
         return code
 
     def compile_check(self, code):
-        self.log(f"--- {self.elapsed} Testing generated {self.filename} ---\n")
+        
+        # Safely log metrics and errors from no-optimisation compile check for syntax errors etc.
+        self.logger.log(f"--- {f'[Elapsed: {time.time() - self.start_time:.2f}s]'} Testing {self.stage} {self.filename} ---\n")
         error, _, metrics, wrapped_code = compile_generated_program(code, language=self.config.language)
         metrics = metrics or {}
         self.stats.metrics['compilation'] = metrics
@@ -110,29 +106,43 @@ class ProgramProcessor:
         if error:
             self.stats.quality_score = 0.0
             full_error = metrics.get("error_full") or error
-            self.log(f"{self.filename} Compilation Failed:\n{full_error}\n")
+            self.logger.log(f"{self.filename} Compilation Failed:\n{full_error}\n")
             self.encountered_errors.append(f"Compilation Error:\n{error}")
             if self.config.verbose:
-                self.log(f"--- {self.filename} Code ---\n{wrapped_code}\n-----------------------\n")
+                self.logger.log(f"--- {self.filename} Code ---\n{wrapped_code}\n-----------------------\n")
             return False, error
         
         self.stats.quality_score = metrics.get('quality_score', 0.0)
-        self.log(f"{self.filename} compiled successfully.\n")
+        self.logger.log(f"{self.filename} compiled successfully.\n")
         return True, ""
 
     def run_check(self, code):
-        self.log(f"--- {self.elapsed} Running {self.filename} ---\n")
-        source_file_path = os.path.join(self.config.current_generated_dir, self.filename) if hasattr(self.config, "current_generated_dir") and self.config.current_generated_dir else None
 
-        # Persist the candidate source before execution so diff testing can copy it
-        # via QUILLFUZZ_SOURCE_FILE when interesting circuits are detected.
-        if source_file_path:
-            try:
-                save_text_to_file(code, source_file_path, verbose=False)
-            except Exception as e:
-                self.log(f"Warning: failed to pre-save source for runtime check ({source_file_path}): {e}")
+        # Running requires wrapping code in test harness and executing it in a tempfile
+        self.logger.log(f"--- {f'[Elapsed: {time.time() - self.start_time:.2f}s]'} Running {self.filename} ---\n")
+        source_file_path = None
+        temp_source_path = None
 
-        error, output, metrics, runtime_code = run_generated_program(code, language=self.config.language, source_file_path=source_file_path, circuit_id=self.index)
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                suffix=".py",
+                prefix=f"{self.filename.replace('.py', '')}_",
+                delete=False,
+                dir="/tmp",
+            ) as temp_source_file:
+                temp_source_file.write(code)
+                temp_source_path = temp_source_file.name
+            source_file_path = temp_source_path
+        except Exception as e:
+            self.logger.log(f"Warning: failed to prepare temp source for runtime check: {e}")
+
+        error, output, metrics, runtime_code = run_generated_program(
+            code,
+            language=self.config.language,
+            source_file_path=source_file_path,
+            circuit_id=self.index,
+        )
         metrics = metrics or {}
         self.stats.metrics['execution'] = metrics
 
@@ -143,7 +153,7 @@ class ProgramProcessor:
             metrics['low_ks_test_levels'] = low_ks_values
             if low_ks_values:
                 low_text = ", ".join([f"L{level}={value:.6g}" for level, value in low_ks_values])
-                self.log(
+                self.logger.log(
                     f"{self.filename} LOW KS detected (threshold={self.config.ks_low_threshold}): {low_text}"
                 )
         
@@ -153,62 +163,84 @@ class ProgramProcessor:
         if error.strip():
             # Log test harness stdout if verbose
             if self.config.verbose:
-                self.log(f"Test Harness Output:\n{output}\n")
+                self.logger.log(f"Test Harness Output:\n{output}\n")
                 
             full_error = metrics.get("error_full") or error
-            self.log(f"{self.filename} Runtime Error:\n{full_error}\n")
+            self.logger.log(f"{self.filename} Runtime Error:\n{full_error}\n")
             self.encountered_errors.append(f"Runtime Error:\n{error}")
             if self.config.verbose:
-                self.log(f"--- {self.filename} Code ---\n{runtime_code}\n-----------------------\n")
+                self.logger.log(f"--- {self.filename} Code ---\n{runtime_code}\n-----------------------\n")
+            if temp_source_path and os.path.exists(temp_source_path):
+                try:
+                    os.remove(temp_source_path)
+                except Exception:
+                    pass
             return False, error
         
-        self.log(f"{self.filename} ran successfully.\n")
+        self.logger.log(f"{self.filename} ran successfully.\n")
         if output:
-            self.log(f"--- {self.filename} Output ---\n{output}\n--------------------------\n")
+            self.logger.log(f"--- {self.filename} Output ---\n{output}\n--------------------------\n")
+        if temp_source_path and self.config.current_generated_dir:
+            generated_source_path = os.path.join(self.config.current_generated_dir, self.filename)
+            try:
+                save_text_to_file(code, generated_source_path, verbose=False)
+            except Exception as e:
+                self.logger.log(f"Warning: failed to persist successful runtime source ({generated_source_path}): {e}")
+        if temp_source_path and os.path.exists(temp_source_path):
+            try:
+                os.remove(temp_source_path)
+            except Exception:
+                pass
         return True, ""
 
-    def fix_loop(self, code, initial_error):
-        current_code = code
-        current_error = initial_error
-        last_failure_type = "compile_fail"
+    def fix_loop(self, current_code, current_error, fix_cycles=None):
         
-        for cycle in range(self.config.n_fixing_cycles):
-            prompt_path = os.path.join(self.config.prompt_dir, "fixing_prompt_template.txt")
+        last_failure_type = "compile_fail"
+        total_cycles = self.config.n_fixing_cycles if fix_cycles is None else fix_cycles
+        prompt_file = "mutate_prompt_template.txt" if self.stage == "mutation" else "fixing_prompt_template.txt"
+        
+        for cycle in range(total_cycles):
+            prompt_path = os.path.join(self.config.prompt_dir, prompt_file)
             if not os.path.exists(prompt_path):
-                self.log(f"Fixing prompt missing at {prompt_path}\n")
+                self.logger.log(f"{self.stage.capitalize()} fix prompt missing at {prompt_path}\n")
                 return current_code, last_failure_type
 
-            prompt = get_dynamic_prompt(prompt_path, faulty_code=current_code, error_message=current_error)
+            prompt = get_dynamic_prompt(
+                prompt_path,
+                faulty_code=current_code,
+                error_message=current_error,
+                input_code=current_code,
+            )
             
             if not prompt:
-                self.log(f"Error: Generated prompt for {self.filename} (cycle {cycle+1}) is empty.\n")
+                self.logger.log(f"Error: Generated prompt for {self.filename} (cycle {cycle+1}) is empty.\n")
                 break
 
             fixed_code, stats, err = ask_any_model(self.model, prompt, reasoning_effort=self.config.reasoning_effort)
 
             if err:
-                 self.log(f"Error from LLM during fixing cycle {cycle+1} for {self.filename}: {err}")
+                 self.logger.log(f"Error from LLM during fixing cycle {cycle+1} for {self.filename}: {err}")
 
             if not fixed_code:
-                self.log(f"Fixing cycle {cycle+1} failed for {self.filename}: {err}\n")
+                self.logger.log(f"Fixing cycle {cycle+1} failed for {self.filename}: {err}\n")
                 break
 
             current_code = fixed_code
             
             self.stats.update(stats)
-            self.log(f"{self.filename} Fixing (Cycle {cycle+1}) Cost: ${stats.get('cost', 0.0):.6f} | "
-                     f"Tokens (In/Out/Total): {stats.get('prompt_tokens', 0)}/{stats.get('completion_tokens', 0)}/{stats.get('total_tokens', 0)}")
+            self.logger.log(f"{self.filename} Fixing (Cycle {cycle+1}) Cost: ${stats.get('cost', 0.0):.6f} | "
+                            f"Tokens (In/Out/Total): {stats.get('prompt_tokens', 0)}/{stats.get('completion_tokens', 0)}/{stats.get('total_tokens', 0)}")
 
             # Verify fix (Compile only first)
             compile_ok, compile_err = self.compile_check(fixed_code)
             
             if not compile_ok:
-                self.log(f"Fixed {self.filename} (Cycle {cycle+1}) Compilation Failed.\n")
+                self.logger.log(f"Fixed {self.filename} (Cycle {cycle+1}) Compilation Failed.\n")
                 current_error = compile_err
                 last_failure_type = "compile_fail"
                 continue
 
-            self.log(f"Fixed {self.filename} (Cycle {cycle+1}) compiled successfully.\n")
+            self.logger.log(f"Fixed {self.filename} (Cycle {cycle+1}) compiled successfully.\n")
             
             # If we need to run it
             if not self.config.compile_only:
@@ -232,13 +264,14 @@ class ProgramProcessor:
         os.makedirs(runtime_fail_dir, exist_ok=True)
         return compile_fail_dir, runtime_fail_dir
 
-    def process(self, generated_dir, failed_dir, prompt_filename="generation_prompt.txt", compile_only=False):
+    def process(self, generated_dir, failed_dir, prompt_filename="generation_prompt.txt", compile_only=False, prompt_kwargs=None, fix_cycles=None):
+        
         self.config.compile_only = compile_only # augment config temporarily
         self.config.current_generated_dir = generated_dir
 
         compile_fail_dir, runtime_fail_dir = self._setup_failure_dirs(failed_dir)
         
-        code = self.generate(prompt_filename)
+        code = self.generate(prompt_filename, prompt_kwargs=prompt_kwargs)
         if not code:
             return None, self.stats, self.encountered_errors, False
 
@@ -260,7 +293,7 @@ class ProgramProcessor:
             return save_path, self.stats, list(set(self.encountered_errors)), False
 
         # If compilation failed, try fixing
-        fixed_code, final_status = self.fix_loop(code, compile_err)
+        fixed_code, final_status = self.fix_loop(code, compile_err, fix_cycles=fix_cycles)
         
         if fixed_code and final_status == "success":
             save_path = os.path.join(generated_dir, self.filename)
@@ -353,7 +386,7 @@ def run_training_phase(model, args, common_run_dir, main_logfile_path):
                 prompt_filename = improve_prompt_logic(
                     args.improver_model, 
                     current_prompt_path,
-                    os.path.join(project_root, PROMPTS_ROOT_DIRNAME, "common"),
+                    os.path.join(project_root, "prompts", "common"),
                     new_prompt_path, 
                     training_errors, 
                     args.language, 
@@ -526,6 +559,218 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
     # Return list of successful files for assembly phase
     return successful_files, summary, metrics, report_entries
 
+
+def run_mutation_phase(model, files, args, common_run_dir, logfile_path, logger=None):
+    mutation_generated_dir = os.path.join(common_run_dir, "generated")
+    mutation_failed_dir = os.path.join(common_run_dir, "failed_programs")
+    os.makedirs(mutation_generated_dir, exist_ok=True)
+    os.makedirs(mutation_failed_dir, exist_ok=True)
+
+    if logger is None:
+        logger = Logger(logfile_path)
+    mutation_logger = logger
+
+    if not files:
+        mutation_logger.log("Mutation stage enabled but no successful generated programs were available.")
+        return [], {
+            "model": model,
+            "total_cost": 0.0,
+            "total_time": 0.0,
+            "total_programs": 0,
+            "valid_programs": 0,
+            "failed_programs": 0,
+            "avg_quality_score": 0.0,
+            "avg_coverage_percent": 0.0,
+            "low_ks_file_count": 0,
+            "ks_low_threshold": args.ks_low_threshold,
+            "total_prompt_tokens": 0,
+            "total_completion_tokens": 0,
+            "total_tokens": 0,
+        }, [], []
+
+    mutation_prompt_file = "mutate_prompt_template.txt"
+    mutation_prompt_path = os.path.join(args.prompt_dir, mutation_prompt_file)
+    if not os.path.exists(mutation_prompt_path):
+        mutation_logger.log(f"Mutation prompt missing at {mutation_prompt_path}")
+        return [], {
+            "model": model,
+            "total_cost": 0.0,
+            "total_time": 0.0,
+            "total_programs": 0,
+            "valid_programs": 0,
+            "failed_programs": 0,
+            "avg_quality_score": 0.0,
+            "avg_coverage_percent": 0.0,
+            "low_ks_file_count": 0,
+            "ks_low_threshold": args.ks_low_threshold,
+            "total_prompt_tokens": 0,
+            "total_completion_tokens": 0,
+            "total_tokens": 0,
+        }, [], []
+
+    try:
+        with open(mutation_prompt_path, 'r', encoding='utf-8') as f:
+            prompt_content = f.read()
+        mutation_logger.log(f"\n--- Mutation Prompt Content ---\n{prompt_content}\n-------------------------------\n")
+    except Exception as e:
+        mutation_logger.log(f"Could not read mutation prompt file: {e}")
+
+    mutation_count = args.n_mutations if args.n_mutations > 0 else len(files)
+    start_time = time.time()
+    stats_list = []
+    metrics_rows = []
+    report_entries = []
+    successful_pool = list(files)
+    successful_files = []
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_workers) as executor:
+        futures = {}
+        for i in range(mutation_count):
+            seed_file = random.choice(files)
+            try:
+                with open(seed_file, 'r', encoding='utf-8') as seed_handle:
+                    seed_code = seed_handle.read()
+            except Exception as error:
+                mutation_logger.log(f"Failed to read mutation seed {seed_file}: {error}")
+                continue
+
+            processor = ProgramProcessor(i, model, args, mutation_logger, time.time(), stage="mutation")
+            future = executor.submit(
+                processor.process,
+                mutation_generated_dir,
+                mutation_failed_dir,
+                mutation_prompt_file,
+                False,
+                {"input_code": seed_code},
+                args.mutation_fix_cycles,
+            )
+            futures[future] = (processor.filename, seed_file)
+
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc=f"Mutation {model}"):
+            try:
+                save_path, stats, errors, _ = future.result()
+                source_filename, seed_file = futures[future]
+                if stats:
+                    stats_list.append(stats)
+
+                execution_metrics = stats.metrics.get("execution", {}) if stats else {}
+                compilation_metrics = stats.metrics.get("compilation", {}) if stats else {}
+                low_ks_values = execution_metrics.get("low_ks_test_levels", []) if execution_metrics else []
+                file_name = os.path.basename(save_path) if save_path else source_filename
+                success = bool(save_path)
+
+                error_details = build_error_details(
+                    [{
+                        "error": execution_metrics.get("error_summary")
+                            or compilation_metrics.get("error_summary")
+                            or summarize_errors(errors),
+                        "error_full": execution_metrics.get("error_full")
+                            or compilation_metrics.get("error_full")
+                            or "\n\n---\n\n".join(errors),
+                    }]
+                )
+
+                report_entries.append({
+                    "file": file_name,
+                    "source_file": os.path.basename(seed_file),
+                    "success": success,
+                    "coverage_percent": execution_metrics.get("coverage_percent", 0.0) if execution_metrics else 0.0,
+                    "low_ks_test_levels": low_ks_values,
+                    "error": error_details["error"],
+                    "error_full": error_details["error_full"],
+                })
+
+                if success and save_path:
+                    abs_path = os.path.abspath(save_path)
+                    successful_files.append(abs_path)
+                    successful_pool.append(abs_path)
+
+                metrics_rows.append(build_metrics_row(
+                    model, file_name, success, execution_metrics, compilation_metrics
+                ))
+            except Exception as e:
+                mutation_logger.log(f"Error: {e}")
+                source_filename, _ = futures[future]
+                error_details = build_error_details([{"error": str(e), "error_full": str(e)}])
+
+                report_entries.append({
+                    "file": source_filename,
+                    "success": False,
+                    "coverage_percent": 0.0,
+                    "low_ks_test_levels": [],
+                    "error": error_details["error"],
+                    "error_full": error_details["error_full"],
+                })
+                metrics_rows.append(build_metrics_row(model, source_filename, False, {}, {}))
+
+    metrics_csv_path = os.path.join(os.path.dirname(logfile_path), "mutation_execution_metrics.csv")
+    append_rows_to_csv(metrics_csv_path, metrics_rows)
+    if metrics_rows:
+        mutation_logger.log(f"Saved {len(metrics_rows)} mutation run metrics rows to {metrics_csv_path}")
+
+    total_time = time.time() - start_time
+    total_cost = sum(s.cost for s in stats_list)
+    quality_scores = [s.quality_score for s in stats_list if s.quality_score is not None]
+    avg_quality = sum(quality_scores) / len(quality_scores) if quality_scores else 0
+
+    total_prompt_tokens = sum(s.prompt_tokens for s in stats_list)
+    total_completion_tokens = sum(s.completion_tokens for s in stats_list)
+    total_tokens = sum(s.total_tokens for s in stats_list)
+
+    successful_entries = [e for e in report_entries if e.get("success")]
+    avg_time_per_valid = total_time / len(successful_entries) if successful_entries else 0
+    successful_coverages = [float(e.get("coverage_percent", 0.0) or 0.0) for e in successful_entries]
+    avg_coverage_percent = sum(successful_coverages) / len(successful_coverages) if successful_coverages else 0.0
+    low_ks_file_count = sum(1 for e in report_entries if e.get("low_ks_test_levels"))
+    valid_count = len(successful_entries)
+
+    summary_log = f"""
+============================================================
+  MUTATION SUMMARY for {model}
+------------------------------------------------------------
+  Target Number of Programs : {mutation_count}
+  Total Valid Programs     : {valid_count}
+  Total Time Taken         : {total_time:.2f} seconds
+  Avg Time per Valid Prog  : {avg_time_per_valid:.2f} seconds
+  Avg Quality Score        : {avg_quality:.4f}
+------------------------------------------------------------
+  Total Cost (Estimated)   : ${total_cost:.6f}
+  Total Prompt Tokens      : {total_prompt_tokens}
+  Total Completion Tokens  : {total_completion_tokens}
+  Total Tokens             : {total_tokens}
+============================================================
+"""
+    mutation_logger.log(summary_log)
+
+    summary = {
+        "model": model,
+        "total_cost": total_cost,
+        "total_time": total_time,
+        "total_programs": mutation_count,
+        "valid_programs": valid_count,
+        "failed_programs": max(0, mutation_count - valid_count),
+        "avg_quality_score": avg_quality,
+        "avg_coverage_percent": avg_coverage_percent,
+        "low_ks_file_count": low_ks_file_count,
+        "ks_low_threshold": args.ks_low_threshold,
+        "total_prompt_tokens": total_prompt_tokens,
+        "total_completion_tokens": total_completion_tokens,
+        "total_tokens": total_tokens,
+    }
+
+    metrics = [{'model': model, 'metrics': s.metrics} for s in stats_list if s.metrics]
+
+    deduped_pool = []
+    seen_paths = set()
+    for file_path in successful_pool:
+        abs_path = os.path.abspath(file_path)
+        if abs_path in seen_paths:
+            continue
+        seen_paths.add(abs_path)
+        deduped_pool.append(abs_path)
+
+    return deduped_pool, summary, metrics, report_entries
+
 def assemble_circuits(model, files, args, base_dir, logger=None):
     """
     Assemble programs sampled from `files` (consider the full pool).
@@ -673,22 +918,25 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
 
 def main():
     parser = argparse.ArgumentParser(description="LLM Circuit Generator")
-    parser.add_argument("--config_file", type=str)
-    parser.add_argument("--run_name", type=str)
-    parser.add_argument("--language", type=str, choices=SUPPORTED_LANGUAGES, default=DEFAULT_LANGUAGE)
-    parser.add_argument("--output_dir", type=str)
-    parser.add_argument("--prompt_dir", type=str)
-    parser.add_argument("--models", nargs='+', default=["deepseek/deepseek-chat"])
-    parser.add_argument("--n_programs", type=int, default=20)
-    parser.add_argument("--n_fixing_cycles", type=int, default=2)
-    parser.add_argument("--max_workers", type=int, default=10)
-    parser.add_argument("--n_assemble", type=int, default=100)
-    parser.add_argument("--n_circuits_per_assembly", type=int, default=2)
+    parser.add_argument("--config_file", type=str, help="Relative path to the configuration file.")
+    parser.add_argument("--run_name", type=str, help="Name for the current run. Defaults to a timestamp.")
+    parser.add_argument("--language", type=str, choices=SUPPORTED_LANGUAGES, default=DEFAULT_LANGUAGE, help="Language for the generated code.")
+    parser.add_argument("--output_dir", type=str, help="Base directory for all outputs. Defaults to 'local_saved_circuits' within the project.")
+    parser.add_argument("--prompt_dir", type=str, help="Directory containing prompt templates. Defaults to 'prompts/<language>' within the project.")
+    parser.add_argument("--models", nargs='+', help="List of models to evaluate (e.g. --models openai/gpt-5.5 anthropic/claude-sonnet-4-5)")
+    parser.add_argument("--n_programs", type=int, default=20, help="Number of programs to generate for each model during the production phase")
+    parser.add_argument("--n_fixing_cycles", type=int, default=2, help="Maximum number of fixing cycles to perform for each generated program during training and production")
+    parser.add_argument("--enable_mutation", action="store_true", default=False, help="Enable the mutation stage after generation")
+    parser.add_argument("--n_mutations", type=int, default=0, help="Number of mutation candidates to produce when mutation is enabled")
+    parser.add_argument("--mutation_fix_cycles", type=int, default=1, help="Maximum number of fixing cycles to perform for each mutation")
+    parser.add_argument("--max_workers", type=int, default=10, help="Maximum number of parallel workers for generation, mutation and assembly")
+    parser.add_argument("--n_assemble", type=int, default=100, help="Number of assembled candidates to generate from the pool of generated/mutated files for each model")
+    parser.add_argument("--n_circuits_per_assembly", type=int, default=2, help="Number of circuits to include in each assembly")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging with code dumps for every execution")
-    parser.add_argument("--training_n", type=int, default=5)
-    parser.add_argument("--training_threshold", type=float, default=0.5)
-    parser.add_argument("--improver_model", type=str, default="anthropic/claude-sonnet-4-5")
-    parser.add_argument("--reasoning_effort", type=str, default="high")
+    parser.add_argument("--training_n", type=int, default=5, help="Number of programs to generate for each training round when improving prompts")
+    parser.add_argument("--training_threshold", type=float, default=0.5, help="Threshold of fix ratio below which the prompt is considered improved enough to stop training rounds")
+    parser.add_argument("--improver_model", type=str, default="anthropic/claude-sonnet-4-5", help="Model to use for improving prompts during training")
+    parser.add_argument("--reasoning_effort", type=str, default="high", help="Level of reasoning effort to request from the model during generation and improvement (e.g. low, medium, high)")
     parser.add_argument("--improve_prompt", action="store_true", default=False, help="Enable prompt improvement stage")
     parser.add_argument("--max_rounds", type=int, default=3, help="Maximum number of prompt-improvement rounds during training")
     parser.add_argument(
@@ -698,17 +946,16 @@ def main():
         help="Threshold below which KS-test p-values are flagged as low in production reports.",
     )
 
+    # Parse args
     args, _ = parser.parse_known_args()
     if args.config_file:
         with open(args.config_file, 'r') as f:
             parser.set_defaults(**(yaml.safe_load(f) or {}))
-
+    # Re-parse CLI args to override config file settings (greater precedence)
     args = parser.parse_args()
     args.language = (args.language or DEFAULT_LANGUAGE).lower()
     if args.language not in SUPPORTED_LANGUAGES:
-        parser.error(
-            f"Unsupported language '{args.language}'. Expected one of: {', '.join(SUPPORTED_LANGUAGES)}"
-        )
+        parser.error(f"Unsupported language '{args.language}'. Expected one of: {', '.join(SUPPORTED_LANGUAGES)}")
 
     # Validate arguments to prevent runtime errors
     if args.n_circuits_per_assembly < 1:
@@ -723,38 +970,44 @@ def main():
         print(f"Warning: n_programs ({args.n_programs}) cannot be negative. Setting to 0.")
         args.n_programs = 0
 
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(script_dir)
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if not args.prompt_dir:
-        args.prompt_dir = os.path.join(
-            project_root,
-            PROMPTS_ROOT_DIRNAME,
-            PROMPT_TEMPLATE_DIRS.get(args.language, PROMPT_TEMPLATE_DIRS[DEFAULT_LANGUAGE]),
-        )
+        args.prompt_dir = os.path.join(project_root, "prompts", args.language)
     if not args.output_dir:
-        args.output_dir = os.path.join(os.path.dirname(script_dir), "local_saved_circuits")
+        args.output_dir = os.path.join(project_root, "local_saved_circuits")
 
-    run_id = args.run_name or time.strftime("%Y%m%d_%H%M%S_improved")
+    run_id = args.run_name or time.strftime("%Y%m%d_%H%M%S")
     common_run_dir = os.path.join(args.output_dir, run_id)
-    os.makedirs(common_run_dir, exist_ok=True)
+    try:
+        os.makedirs(common_run_dir, exist_ok=True)
+    except Exception as e:
+        print(f"Failed to create run directory {common_run_dir}: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        sys.exit(3)
+
     os.environ["QUILLFUZZ_RUN_DIR"] = os.path.abspath(common_run_dir)
     logfile_path = os.path.join(common_run_dir, "execution.log")
 
+    # Start of main training, proudction and mutation loops
     all_stats = []
     all_metrics = []
     all_reports = []
     main_logger = Logger(logfile_path)
     assembled_all_metrics = []
     assembled_all_stats = []
+    mutation_all_stats = []
+    mutation_all_metrics = []
 
     for model in args.models:
         # Train
         if args.improve_prompt:
-             best_prompt = run_training_phase(model, args, common_run_dir, logfile_path)
-             # The training phase returns a filename, expected to be in args.prompt_dir or created there
+            # The training phase returns a filename, expected to be in args.prompt_dir or created there
+            best_prompt = run_training_phase(model, args, common_run_dir, logfile_path)
+             
         else:
-             # Default to the standard generation prompt
-             best_prompt = "generation_prompt.txt"
+            # Default to the standard generation prompt
+            best_prompt = "generation_prompt.txt"
         
         # Produce
         files, summary, metrics, report_entries = run_production_phase(
@@ -764,26 +1017,50 @@ def main():
         all_metrics.extend(metrics)
         all_reports.append({"model": model, "entries": report_entries})
 
+        # Mutate generated files from production phase, strictly adding to pool of files for assembly
+        mutated_files = []
+        if args.enable_mutation:
+            mutated_files, mutation_summary, mutation_metrics, mutation_reports = run_mutation_phase(
+                model, files, args, common_run_dir, logfile_path, main_logger
+            )
+
+            if mutation_summary is not None:
+                mutation_all_stats.append(mutation_summary)
+            if mutation_metrics:
+                mutation_all_metrics.extend(mutation_metrics)
+            if mutation_reports:
+                all_reports.append({"model": f"{model}::mutation", "entries": mutation_reports})
+
+        # Union generated and mutated files using absolute paths
+        assembly_files = list(files)
+        if mutated_files:
+            seen_files = set()
+            assembly_files = []
+            for file_path in list(files) + list(mutated_files):
+                abs_path = os.path.abspath(file_path)
+                if abs_path in seen_files:
+                    continue
+                seen_files.add(abs_path)
+                assembly_files.append(abs_path)
+
         # Assemble
-        if files:
+        if assembly_files:
             assembly_logfile = os.path.join(common_run_dir, "assembly_execution.log")
             assembly_logger = Logger(assembly_logfile)
             assembled_files, assembled_metrics = assemble_circuits(
-                model, files, args, common_run_dir, assembly_logger
+                model, assembly_files, args, common_run_dir, assembly_logger
             )
 
             # Collect assembled metrics for cross-model plots
             if assembled_metrics:
                 assembled_all_metrics.extend(assembled_metrics)
                 # Build a minimal summary for assembled results per model
-                total = len(assembled_metrics)
-                valid = sum(1 for m in assembled_metrics if m.get('success'))
                 assembled_all_stats.append({
                     'model': model,
                     'total_cost': 0.0,
                     'total_time': 0.0,
-                    'total_programs': total,
-                    'valid_programs': valid,
+                    'total_programs': len(assembled_metrics),
+                    'valid_programs': sum(1 for m in assembled_metrics if m.get('success')),
                     'avg_quality_score': 0.0,
                 })
 
@@ -791,6 +1068,12 @@ def main():
         generate_summary_plot(all_stats, os.path.join(common_run_dir, "plots", "performance"))
     if all_metrics:
         generate_complexity_scatter_plots(all_metrics, os.path.join(common_run_dir, "plots", "complexity"))
+
+    # Plots for mutation circuits
+    if mutation_all_stats:
+        generate_summary_plot(mutation_all_stats, os.path.join(common_run_dir, "plots", "mutation_performance"))
+    if mutation_all_metrics:
+        generate_complexity_scatter_plots(mutation_all_metrics, os.path.join(common_run_dir, "plots", "mutation_complexity"))
 
     # Plots for assembled circuits (separate folder)
     if assembled_all_stats:
@@ -824,5 +1107,6 @@ def main():
     with open(assembled_summary_path, "w", encoding="utf-8") as f:
         json.dump(assembled_summary, f, indent=2)
     print(f"Assembled performance summary JSON: {assembled_summary_path}")
+
 if __name__ == "__main__":
     main()
