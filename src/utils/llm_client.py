@@ -21,6 +21,17 @@ os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY", "")
 os.environ["DEEPSEEK_API_KEY"] = os.getenv("DEEPSEEK_API_KEY", "")
 os.environ["ANTHROPIC_API_KEY"] = os.getenv("ANTHROPIC_API_KEY", "")
 
+MODEL_CUSTOM_COSTS = {
+    "deepseek/deepseek-v4-flash": {
+        "input_cost_per_token": 0.14 / 1_000_000,
+        "output_cost_per_token": 0.28 / 1_000_000,
+    },
+}
+
+
+def _get_custom_cost_per_token(model_name):
+    return MODEL_CUSTOM_COSTS.get(model_name)
+
 def improve_prompt_logic(improver_model, prompt_path, common_prompt_dir, output_path, error_logs, language, logger=None, reasoning_effort="high"):
     """
     Analyzes errors and rewrites the prompt to improve generation.
@@ -65,16 +76,14 @@ def get_dynamic_prompt(template_path, **kwargs) -> str:
     template = Template(template_str)
     return template.render(**kwargs)
 
-def ask_any_model(model_name, prompt, reasoning_effort="high"):
-    # tqdm.write(f"Sending to {model_name}...") # Too noisy for concurrent execution
-    
+def ask_any_model(model_name, prompt, reasoning_effort="high"):    
     max_retries = 10
     base_delay = 5
     max_delay = 120
+    custom_cost_per_token = _get_custom_cost_per_token(model_name)
     
     for attempt in range(max_retries):
         try:
-            # distinct "completion" function works for ALL providers
             response = completion(
                 model=model_name, 
                 messages=[{ "content": prompt, "role": "user" }],
@@ -85,8 +94,15 @@ def ask_any_model(model_name, prompt, reasoning_effort="high"):
             answer = response['choices'][0]['message']['content']
             
             try:
-                cost = completion_cost(completion_response=response)
-            except:
+                if custom_cost_per_token:
+                    cost = completion_cost(
+                        completion_response=response,
+                        custom_cost_per_token=custom_cost_per_token,
+                    )
+                else:
+                    cost = completion_cost(completion_response=response)
+            except Exception as cost_error:
+                tqdm.write(f"Warning: cost calculation failed for {model_name}: {cost_error}")
                 cost = 0.0
                 
             usage = response.get('usage', {})
