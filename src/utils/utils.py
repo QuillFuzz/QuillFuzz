@@ -105,13 +105,22 @@ def generate_summary_plot(stats_summary, output_dir):
     models = [s['model'] for s in stats_summary]
     short_models = [m.split('/')[-1] for m in models]
     
-    valid_percentages = [(s['valid_programs'] / s['total_programs']) * 100 for s in stats_summary]
-    
+    valid_percentages = [
+        (s.get('valid_programs', 0) / s.get('total_programs', 1)) * 100
+        if s.get('total_programs', 0) else 0
+        for s in stats_summary
+    ]
+
     # Handle potentially 0 valid programs to avoid division by zero
     avg_times = []
     for s in stats_summary:
-        if s['valid_programs'] > 0:
-            avg_times.append(s['total_time'] / s['valid_programs'])
+        valid = s.get('valid_programs', 0)
+        total_time = s.get('total_time', 0)
+        if valid:
+            try:
+                avg_times.append(total_time / valid)
+            except Exception:
+                avg_times.append(0)
         else:
             avg_times.append(0)
 
