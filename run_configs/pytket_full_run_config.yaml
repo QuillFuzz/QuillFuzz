@@ -4,17 +4,17 @@ models:
   # - anthropic/claude-sonnet-4-5
   # - openai/gpt-5.4-nano
 
-n_programs: 5000
+n_programs: 500
 n_fixing_cycles: 2
 # Enable the mutation stage after generation
-enable_mutation: false
+enable_mutation: true
 # Number of mutation candidates to produce when mutation is enabled
-n_mutations: 0
+n_mutations: 4500
 # Maximum number of fixing cycles to perform for each mutation
 mutation_fix_cycles: 1
 max_workers: 15
 n_assemble: 50000
-n_circuits_per_assembly: 2
+n_circuits_per_assembly: 3
 verbose: false
 reasoning_effort: high
 ks_low_threshold: 0.001

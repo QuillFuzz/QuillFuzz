@@ -9,13 +9,13 @@ models:
 
 # Number of programs to generate for each model
 # Number of programs to generate for each model
-n_programs: 5000
+n_programs: 500
 # Maximum number of fixing cycles to perform for each generated program
 n_fixing_cycles: 3
 # Enable the mutation stage after generation
-enable_mutation: false
+enable_mutation: true
 # Number of mutation candidates to produce when mutation is enabled
-n_mutations: 0
+n_mutations: 4500
 # Maximum number of fixing cycles to perform for each mutation
 mutation_fix_cycles: 1
 # Number of parallel workers to use for generation and fixing
