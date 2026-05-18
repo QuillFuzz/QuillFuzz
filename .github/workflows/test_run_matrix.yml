@@ -25,8 +25,8 @@ jobs:
 
       - name: Build Docker image and start container (non-root)
         run: |
-          # Export UID/GID only for the `docker compose` command via env
-          env UID=$(id -u) GID=$(id -g) docker compose up -d --build
+          # Export USER_ID/GROUP_ID to match compose.yaml's non-root mapping
+          env USER_ID=$(id -u) GROUP_ID=$(id -g) docker compose up -d --build
         shell: bash
 
       - name: Run Guppy test
