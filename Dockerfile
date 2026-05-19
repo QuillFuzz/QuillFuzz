@@ -37,59 +37,31 @@ RUN python3 -m venv /opt/venv
 ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Set LLVM environment variables for qir-runner
-ENV LLVM_SYS_140_PREFIX=/usr/lib/llvm-14
-ENV PATH="/usr/lib/llvm-14/bin:$PATH"
-
-# Install Rust
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
+ENV LLVM_SYS_140_PREFIX=/usr/lib/llvm-14
+ENV PATH="/usr/lib/llvm-14/bin:${PATH}"
 
 # Install uv
 RUN pip install uv
 
-# Install Conan (C++ package manager)
-RUN pip install conan && \
-    conan profile detect --force
-
 # Set up working directory
-# We'll use /QuillFuzz so your prompt looks like [root@... /QuillFuzz]#
 WORKDIR /QuillFuzz
 
 # Copy project files
 COPY pyproject.toml .
 
-# --- Build qir-runner ---
-# Cloning and building inside Docker to ensure consistency
-WORKDIR /QuillFuzz/libs
-RUN git clone https://github.com/CQCL/qir-runner.git
-
-WORKDIR /QuillFuzz/libs/qir-runner
-# Build binary
-RUN cargo build --release
-
-# Install binary to local bin (exposed in PATH)
-RUN cp target/release/qir-runner /usr/local/bin/
-
-# Install python package part of qir-runner
-WORKDIR /QuillFuzz/libs/qir-runner/pip
-# Using uv for fast installation
-RUN uv pip install .
-
 # --- Install Main Project Dependencies ---
 WORKDIR /QuillFuzz
 
-# We use the virtual environment, so no --system needed.
-# "setuptools<70" and "wheel" are installed first to fix build isolation issues
-RUN uv pip install "setuptools<70" wheel maturin
+# Install build helpers
+RUN uv pip install wheel maturin
 
 # Install dependencies
-# We use the list from setup_deps.sh. 
-# Notes:
-# - git+https://github.com/CQCL/hugr-qir.git is installed directly
+# Note:
 # - We use --no-build-isolation to use the system installed tools/headers
 RUN uv pip install --no-build-isolation \
-    pytket \
+    pytket\
     qiskit \
     pytket-qiskit \
     matplotlib \
@@ -101,17 +73,17 @@ RUN uv pip install --no-build-isolation \
     qnexus \
     tket \
     selene-sim==0.2.12 \
-    guppylang \
+    guppylang==0.21.13 \
     litellm \
-    coverage \
-    git+https://github.com/CQCL/hugr-qir.git
+    botocore \
+    boto3 \
+    coverage
 
 # Copy the rest of the application code
 COPY . /QuillFuzz
 
 # Final cleanups
-RUN uv cache clean && \
-    rm -rf /root/.cargo/registry/cache
+RUN uv cache clean
 
 # Set the default command
 CMD ["/bin/bash"]
