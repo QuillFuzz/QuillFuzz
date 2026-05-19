@@ -136,15 +136,8 @@ class Base():
 
         circuit_dest_path = interesting_dir / base_name
         if circuit_dest_path.exists() and circuit_source_path is not None and circuit_dest_path.resolve() != circuit_source_path.resolve():
-            stem = circuit_dest_path.stem
-            suffix = circuit_dest_path.suffix
-            idx = 1
-            while True:
-                candidate_dest = interesting_dir / f"{stem}_flagged_{idx}{suffix}"
-                if not candidate_dest.exists():
-                    circuit_dest_path = candidate_dest
-                    break
-                idx += 1
+            print(f"Info: File {circuit_dest_path} has already been flagged as interesting. Skipping")
+            return
 
         if circuit_source_path is not None and circuit_source_path.exists():
             try:
