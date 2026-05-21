@@ -3,3 +3,4 @@ from .pytket_testing import pytketTesting
 from .qiskit_testing import qiskitTesting
 from .guppy_testing import guppyTesting
 from .cirq_testing import cirqTesting
+from .pennylane_testing import pennylaneTesting

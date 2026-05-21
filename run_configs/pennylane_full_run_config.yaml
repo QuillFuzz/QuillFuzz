@@ -1,0 +1,24 @@
+language: pennylane
+models:
+  - deepseek/deepseek-v4-flash
+  # - deepseek/deepseek-v4-pro
+  # - anthropic/claude-sonnet-4-5
+
+n_programs: 500
+n_fixing_cycles: 2
+# Enable the mutation stage after generation
+enable_mutation: true
+# Number of mutation candidates to produce when mutation is enabled
+n_mutations: 4500
+# Maximum number of fixing cycles to perform for each mutation
+mutation_fix_cycles: 1
+max_workers: 15
+n_assemble: 50000
+n_circuits_per_assembly: 3
+verbose: false
+reasoning_effort: high
+ks_low_threshold: 0.0001
+
+# Improvement loop parameters for improving prompt before mass generation
+improve_prompt: false
+improver_model: deepseek/deepseek-reasoner

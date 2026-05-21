@@ -271,6 +271,48 @@ if __name__ == '__main__':
     return import_stmt + code + wrapper_code
 
 
+def wrap_for_compilation_pennylane(code: str) -> str:
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code
+
+    has_main = any(isinstance(node, ast.FunctionDef) and node.name == 'main' for node in tree.body)
+    if not has_main:
+        return code
+
+    has_main_block = False
+    for node in tree.body:
+        if isinstance(node, ast.If) and isinstance(node.test, ast.Compare):
+            if isinstance(node.test.left, ast.Name) and node.test.left.id == "__name__":
+                has_main_block = True
+                break
+
+    if has_main_block:
+        return code
+
+    wrapper_code = "\nif __name__ == '__main__':\n\t main()\n"
+    return code + wrapper_code
+
+
+def wrap_for_testing_pennylane(code: str, circuit_id: int = 0) -> str:
+    try:
+        tree = ast.parse(code)
+        has_main = any(isinstance(node, ast.FunctionDef) and node.name == 'main' for node in tree.body)
+        if not has_main:
+            return code
+    except SyntaxError:
+        return code
+
+    import_stmt = "from src.utils.diff_testing import pennylaneTesting\n"
+    wrapper_code = f"""
+if __name__ == '__main__':
+    pt = pennylaneTesting()
+    pt.ks_diff_test(main(), {circuit_id})
+"""
+    return import_stmt + code + wrapper_code
+
+
 def wrap_for_compilation_pytket(code: str) -> str:
     """
     Parses the code to find main and adds a main block to execute it.

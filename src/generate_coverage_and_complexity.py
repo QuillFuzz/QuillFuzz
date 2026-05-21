@@ -463,7 +463,7 @@ def main():
         default="py",
         help="Input mode: 'py' runs compile/execute checks on Python files; 'csv' reads metrics CSV and generates plots only.",
     )
-    parser.add_argument("--language", choices=["guppy", "qiskit", "pytket"], default="guppy")
+    parser.add_argument("--language", choices=["guppy", "qiskit", "pytket", "pennylane"], default="guppy")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--recursive", action="store_true", help="Recursively find .py files")
     parser.add_argument(

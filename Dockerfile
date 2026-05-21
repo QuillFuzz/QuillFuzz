@@ -63,6 +63,7 @@ RUN uv pip install wheel maturin
 RUN uv pip install --no-build-isolation \
     pytket\
     qiskit \
+    pennylane \
     pytket-qiskit \
     matplotlib \
     sympy \
@@ -73,7 +74,7 @@ RUN uv pip install --no-build-isolation \
     qnexus \
     tket \
     selene-sim==0.2.12 \
-    guppylang==0.21.13 \
+    guppylang==0.21.11 \
     litellm \
     botocore \
     boto3 \

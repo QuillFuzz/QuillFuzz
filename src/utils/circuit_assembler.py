@@ -672,10 +672,106 @@ def main():
         logging.error(f"Error writing output to {output_path}: {e}")
         return False
 
+
+def assemble_pennylane(files, output_path, unique_index=0):
+    all_imports = []
+    renamed_bodies = []
+    main_builders = []
+
+    required_import = ast.parse("import pennylane as qml").body[0]
+    all_imports.append(required_import)
+    seen_imports = {ast.unparse(required_import)}
+
+    for i, file_path in enumerate(files):
+        try:
+            with open(file_path, "r") as f:
+                source = f.read()
+
+            tree = ast.parse(source)
+            prefix = f"c{i}_"
+            file_global_funcs = set()
+
+            for node in tree.body:
+                if isinstance(node, ast.FunctionDef):
+                    file_global_funcs.add(node.name)
+
+            top_level_nodes = []
+            for node in tree.body:
+                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                    code_str = ast.unparse(node)
+                    if code_str not in seen_imports:
+                        seen_imports.add(code_str)
+                        all_imports.append(node)
+                    continue
+
+                if isinstance(node, ast.If) and isinstance(node.test, ast.Compare):
+                    if isinstance(node.test.left, ast.Name) and node.test.left.id == "__name__":
+                        continue
+
+                if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+                    if isinstance(node.value.func, ast.Name) and node.value.func.id == "main":
+                        continue
+
+                top_level_nodes.append(node)
+
+            renamer = CircuitRenamer(prefix, file_global_funcs)
+            new_nodes = []
+            for node in top_level_nodes:
+                new_node = renamer.visit(node)
+                new_nodes.append(new_node)
+
+            renamed_bodies.extend(new_nodes)
+
+            renamed_main = prefix + "main"
+            if any(isinstance(node, ast.FunctionDef) and node.name == renamed_main for node in new_nodes):
+                main_builders.append(renamed_main)
+
+        except Exception as e:
+            logging.error(f"Error processing {file_path}: {e}")
+            continue
+
+    new_module = ast.Module(body=[], type_ignores=[])
+    new_module.body.extend(all_imports)
+    new_module.body.extend(renamed_bodies)
+
+    builder_list = ", ".join(main_builders)
+    master_main_src = f"""
+def main():
+    assembled = None
+    builders = [{builder_list}]
+
+    for builder in builders:
+        try:
+            candidate = builder()
+        except Exception:
+            continue
+
+        if assembled is None:
+            assembled = candidate
+            continue
+
+        if callable(candidate):
+            assembled = candidate
+
+    return assembled
+"""
+    new_module.body.append(ast.parse(master_main_src).body[0])
+
+    try:
+        ast.fix_missing_locations(new_module)
+        with open(output_path, "w") as f:
+            f.write(ast.unparse(new_module))
+        return True
+    except Exception as e:
+        logging.error(f"Error writing output to {output_path}: {e}")
+        return False
+
 def assemble(files, output_path, unique_index=0, language='guppy'):
     if language == 'qiskit':
         return assemble_qiskit(files, output_path, unique_index)
     if language == 'pytket':
         return assemble_pytket(files, output_path, unique_index)
+    if language == 'pennylane':
+        return assemble_pennylane(files, output_path, unique_index)
     
     return assemble_guppy(files, output_path, unique_index)
