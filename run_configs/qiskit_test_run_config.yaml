@@ -19,7 +19,7 @@ n_assemble: 2
 n_circuits_per_assembly: 2
 verbose: false
 reasoning_effort: high
-ks_low_threshold: 0.001
+ks_low_threshold: 0.0001
 
 # Improvement loop parameters for improving prompt before mass generation
 improve_prompt: false

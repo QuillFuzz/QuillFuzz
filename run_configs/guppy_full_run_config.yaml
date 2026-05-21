@@ -29,7 +29,7 @@ verbose: false
 # Reasoning effort of model to generate program
 reasoning_effort: high
 # Threshold for KS test to detect miscompilation.
-ks_low_threshold: 0.001
+ks_low_threshold: 0.0001
 
 
 # Improvement loop parameters for improving prompt before mass generation
