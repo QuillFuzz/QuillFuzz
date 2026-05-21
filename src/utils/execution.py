@@ -14,6 +14,8 @@ from .ast_ops import (
     wrap_for_testing_qiskit,
     wrap_for_compilation_pytket,
     wrap_for_testing_pytket,
+    wrap_for_compilation_pennylane,
+    wrap_for_testing_pennylane,
     get_code_complexity_metrics,
 )
 
@@ -26,6 +28,7 @@ LANGUAGE_DEFAULT_SOURCES = {
     "guppy": "guppylang_internals",
     "qiskit": "qiskit",
     "pytket": "pytket",
+    "pennylane": "pennylane",
 }
 
 
@@ -150,6 +153,8 @@ def _wrap_code_for_compilation(clean_code: str, language: str) -> str:
         return wrap_for_compilation_qiskit(clean_code)
     if language == "pytket":
         return wrap_for_compilation_pytket(clean_code)
+    if language == "pennylane":
+        return wrap_for_compilation_pennylane(clean_code)
     return clean_code
 
 
@@ -160,6 +165,8 @@ def _wrap_code_for_testing(clean_code: str, language: str, circuit_id: int) -> s
         return wrap_for_testing_qiskit(clean_code, circuit_id)
     if language == "pytket":
         return wrap_for_testing_pytket(clean_code, circuit_id)
+    if language == "pennylane":
+        return wrap_for_testing_pennylane(clean_code, circuit_id)
     return clean_code
 
 

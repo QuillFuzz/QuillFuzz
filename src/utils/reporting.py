@@ -20,6 +20,69 @@ def build_metrics_row(model: str, file_name: str, success: bool, execution_metri
     }
 
 
+def build_phase_summary(
+        phase_name: str,
+        model: str,
+        total_programs: int,
+        total_time: float,
+        stats_list: List[Any],
+        report_entries: List[Dict[str, Any]],
+        ks_low_threshold: float,
+) -> Tuple[str, Dict[str, Any]]:
+    """Build the formatted summary log and summary dict for a run phase."""
+    total_cost = sum(getattr(stats, "cost", 0.0) for stats in stats_list)
+    quality_scores = [stats.quality_score for stats in stats_list if getattr(stats, "quality_score", None) is not None]
+    avg_quality = sum(quality_scores) / len(quality_scores) if quality_scores else 0.0
+
+    total_prompt_tokens = sum(getattr(stats, "prompt_tokens", 0) for stats in stats_list)
+    total_completion_tokens = sum(getattr(stats, "completion_tokens", 0) for stats in stats_list)
+    total_tokens = sum(getattr(stats, "total_tokens", 0) for stats in stats_list)
+
+    successful_entries = [entry for entry in report_entries if entry.get("success")]
+    valid_count = len(successful_entries)
+    failed_programs = max(0, total_programs - valid_count)
+    avg_time_per_valid = total_time / valid_count if valid_count else 0.0
+
+    successful_coverages = [float(entry.get("coverage_percent", 0.0) or 0.0) for entry in successful_entries]
+    avg_coverage_percent = sum(successful_coverages) / len(successful_coverages) if successful_coverages else 0.0
+    low_ks_file_count = sum(1 for entry in report_entries if entry.get("low_ks_test_levels"))
+
+    summary = {
+            "model": model,
+            "total_cost": total_cost,
+            "total_time": total_time,
+            "total_programs": total_programs,
+            "valid_programs": valid_count,
+            "failed_programs": failed_programs,
+            "avg_quality_score": avg_quality,
+            "avg_coverage_percent": avg_coverage_percent,
+            "low_ks_file_count": low_ks_file_count,
+            "ks_low_threshold": ks_low_threshold,
+            "total_prompt_tokens": total_prompt_tokens,
+            "total_completion_tokens": total_completion_tokens,
+            "total_tokens": total_tokens,
+    }
+
+    summary_log = f"""
+============================================================
+    {phase_name} SUMMARY for {model}
+------------------------------------------------------------
+    Target Number of Programs : {total_programs}
+    Total Valid Programs     : {valid_count}
+    Total Time Taken         : {total_time:.2f} seconds
+    Avg Time per Valid Prog  : {avg_time_per_valid:.2f} seconds
+    Avg Quality Score        : {avg_quality:.4f}
+------------------------------------------------------------
+    Total Cost (Estimated)   : ${total_cost:.6f}
+    Total Prompt Tokens      : {total_prompt_tokens}
+    Total Completion Tokens  : {total_completion_tokens}
+    Total Tokens             : {total_tokens}
+============================================================
+"""
+
+    return summary_log, summary
+
+
 class Logger:
     def __init__(self, logfile_path: str):
         self.logfile_path = logfile_path

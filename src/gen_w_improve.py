@@ -20,16 +20,16 @@ from utils.utils import save_text_to_file, generate_summary_plot, generate_compl
 from utils.execution import run_generated_program, compile_generated_program
 from utils.reporting import (
     Logger,
+    build_phase_summary,
     extract_ks_test_results,
     find_low_ks_values,
-    flatten_metrics_for_csv,
     append_rows_to_csv,
     build_error_details,
     summarize_errors,
     build_metrics_row,
 )
 
-SUPPORTED_LANGUAGES = ("guppy", "qiskit", "pytket")
+SUPPORTED_LANGUAGES = ("guppy", "qiskit", "pytket", "pennylane")
 DEFAULT_LANGUAGE = "guppy"
 
 @dataclass
@@ -141,7 +141,7 @@ class ProgramProcessor:
             code,
             language=self.config.language,
             source_file_path=source_file_path,
-            circuit_id=self.index,
+            circuit_id=self.index + 1,
         )
         metrics = metrics or {}
         self.stats.metrics['execution'] = metrics
@@ -314,6 +314,7 @@ def run_training_phase(model, args, common_run_dir, main_logfile_path):
     prompt_filename = "generation_prompt.txt"
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir)
+    training_logger = Logger(main_logfile_path)
     
     if args.training_n <= 0:
         return prompt_filename
@@ -322,6 +323,10 @@ def run_training_phase(model, args, common_run_dir, main_logfile_path):
 
     best_prompt = prompt_filename
     best_fix_ratio = 1.0
+    total_start_time = time.time()
+    training_stats = []
+    training_reports = []
+    rounds_completed = 0
 
     for round_idx in range(max_rounds + 1):
         # Setup directories
@@ -332,11 +337,8 @@ def run_training_phase(model, args, common_run_dir, main_logfile_path):
         os.makedirs(t_gen_dir, exist_ok=True)
         os.makedirs(t_fail_dir, exist_ok=True)
 
-        # Per-round logger
-        round_logfile = os.path.join(round_dir, f"round_{round_idx}_execution.log")
-        logger = Logger(round_logfile)
-        logger.log(f"\n[Training Round {round_idx}] Model: {model} | Prompt: {prompt_filename}")
-        logger.log(f"Reasoning Effort: {args.reasoning_effort}")
+        training_logger.log(f"\n[Training Round {round_idx}] Model: {model} | Prompt: {prompt_filename}")
+        training_logger.log(f"Reasoning Effort: {args.reasoning_effort}")
 
         training_errors = []
         count_needed_fix = 0
@@ -344,22 +346,33 @@ def run_training_phase(model, args, common_run_dir, main_logfile_path):
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_workers) as executor:
             futures = []
             for i in range(args.training_n):
-                processor = ProgramProcessor(i, model, args, logger, time.time())
+                processor = ProgramProcessor(i, model, args, training_logger, time.time())
                 futures.append(executor.submit(
                     processor.process, t_gen_dir, t_fail_dir, prompt_filename, True
                 ))
 
             for future in tqdm(concurrent.futures.as_completed(futures), total=args.training_n, desc=f"Training Round {round_idx}"):
                 try:
-                    _, _, errors, was_fixed = future.result()
+                    save_path, stats, errors, was_fixed = future.result()
                     training_errors.extend(errors)
+                    if stats:
+                        training_stats.append(stats)
+                    training_reports.append({
+                        "file": os.path.basename(save_path) if save_path else f"round_{round_idx}_program",
+                        "success": not was_fixed,
+                        "coverage_percent": 0.0,
+                        "low_ks_test_levels": [],
+                        "error": summarize_errors(errors),
+                        "error_full": "\n\n---\n\n".join(errors),
+                    })
                     if was_fixed:
                         count_needed_fix += 1
                 except Exception as e:
-                    logger.log(f"Training error: {e}")
+                    training_logger.log(f"Training error: {e}")
 
         fix_ratio = count_needed_fix / args.training_n
-        logger.log(f"Round {round_idx} Result: {count_needed_fix}/{args.training_n} fixes (Ratio: {fix_ratio:.2f})")
+        rounds_completed += 1
+        training_logger.log(f"Round {round_idx} Result: {count_needed_fix}/{args.training_n} fixes (Ratio: {fix_ratio:.2f})")
 
         # Update best prompt if this round is strictly better
         if fix_ratio < best_fix_ratio:
@@ -367,11 +380,21 @@ def run_training_phase(model, args, common_run_dir, main_logfile_path):
             best_prompt = prompt_filename
 
         if fix_ratio < args.training_threshold:
-            logger.log(f"Training success! Proceeding with {prompt_filename}")
+            training_logger.log(f"Training success! Proceeding with {prompt_filename}")
+            summary_log, _ = build_phase_summary(
+                "TRAINING",
+                model,
+                rounds_completed * args.training_n,
+                time.time() - total_start_time,
+                training_stats,
+                training_reports,
+                args.ks_low_threshold,
+            )
+            training_logger.log(summary_log)
             return prompt_filename
 
         if args.improve_prompt and round_idx < max_rounds:
-            logger.log("Threshold not met. Improving prompt...")
+            training_logger.log("Threshold not met. Improving prompt...")
             
             # Resolve current prompt path for reading
             current_prompt_path = prompt_filename
@@ -390,16 +413,26 @@ def run_training_phase(model, args, common_run_dir, main_logfile_path):
                     new_prompt_path, 
                     training_errors, 
                     args.language, 
-                    logger,
+                    training_logger,
                     reasoning_effort=args.reasoning_effort
                 )
             except Exception as e:
-                logger.log(f"Error improving prompt: {e}")
+                training_logger.log(f"Error improving prompt: {e}")
                 import traceback
-                logger.log(traceback.format_exc())
+                training_logger.log(traceback.format_exc())
         else:
-            logger.log("Max rounds reached or improvement disabled.")
-            
+            training_logger.log("Max rounds reached or improvement disabled.")
+
+    summary_log, _ = build_phase_summary(
+        "TRAINING",
+        model,
+        rounds_completed * args.training_n,
+        time.time() - total_start_time,
+        training_stats,
+        training_reports,
+        args.ks_low_threshold,
+    )
+    training_logger.log(summary_log)
     return best_prompt
 
 def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_path, logger=None):
@@ -500,66 +533,25 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
     if metrics_rows:
         logger.log(f"Saved {len(metrics_rows)} run metrics rows to {metrics_csv_path}")
 
-    # Aggregating Stats
     total_time = time.time() - start_time
-    total_cost = sum(s.cost for s in stats_list)
-    quality_scores = [s.quality_score for s in stats_list if s.quality_score is not None]
-    avg_quality = sum(quality_scores) / len(quality_scores) if quality_scores else 0
-    
-    total_prompt_tokens = sum(s.prompt_tokens for s in stats_list)
-    total_completion_tokens = sum(s.completion_tokens for s in stats_list)
-    total_tokens = sum(s.total_tokens for s in stats_list)
-    
-    successful_entries = [e for e in report_entries if e.get("success")]
-    avg_time_per_valid = total_time / len(successful_entries) if successful_entries else 0
-    
-    successful_coverages = [float(e.get("coverage_percent", 0.0) or 0.0) for e in successful_entries]
-    avg_coverage_percent = sum(successful_coverages) / len(successful_coverages) if successful_coverages else 0.0
-    
-    low_ks_file_count = sum(1 for e in report_entries if e.get("low_ks_test_levels"))
-
-    valid_count = len(successful_entries)
-    
-    summary_log = f"""
-============================================================
-  PERFORMANCE SUMMARY for {model}
-------------------------------------------------------------
-  Target Number of Programs : {args.n_programs}
-  Total Valid Programs     : {valid_count}
-  Total Time Taken         : {total_time:.2f} seconds
-  Avg Time per Valid Prog  : {avg_time_per_valid:.2f} seconds
-  Avg Quality Score        : {avg_quality:.4f}
-------------------------------------------------------------
-  Total Cost (Estimated)   : ${total_cost:.6f}
-  Total Prompt Tokens      : {total_prompt_tokens}
-  Total Completion Tokens  : {total_completion_tokens}
-  Total Tokens             : {total_tokens}
-============================================================
-"""
+    summary_log, summary = build_phase_summary(
+        "PERFORMANCE",
+        model,
+        args.n_programs,
+        total_time,
+        stats_list,
+        report_entries,
+        args.ks_low_threshold,
+    )
     logger.log(summary_log)
-    summary = {
-        "model": model,
-        "total_cost": total_cost,
-        "total_time": total_time,
-        "total_programs": args.n_programs,
-        "valid_programs": valid_count,
-        "failed_programs": max(0, args.n_programs - valid_count),
-        "avg_quality_score": avg_quality,
-        "avg_coverage_percent": avg_coverage_percent,
-        "low_ks_file_count": low_ks_file_count,
-        "ks_low_threshold": args.ks_low_threshold,
-        "total_prompt_tokens": total_prompt_tokens,
-        "total_completion_tokens": total_completion_tokens,
-        "total_tokens": total_tokens
-    }
 
     metrics = [{'model': model, 'metrics': s.metrics} for s in stats_list if s.metrics]
     
     # Return list of successful files for assembly phase
     return successful_files, summary, metrics, report_entries
 
-
 def run_mutation_phase(model, files, args, common_run_dir, logfile_path, logger=None):
+    """Runs mutation phase for given model and valid pool of source files to mutate"""
     mutation_generated_dir = os.path.join(common_run_dir, "generated")
     mutation_failed_dir = os.path.join(common_run_dir, "failed_programs")
     os.makedirs(mutation_generated_dir, exist_ok=True)
@@ -571,42 +563,14 @@ def run_mutation_phase(model, files, args, common_run_dir, logfile_path, logger=
 
     if not files:
         mutation_logger.log("Mutation stage enabled but no successful generated programs were available.")
-        return [], {
-            "model": model,
-            "total_cost": 0.0,
-            "total_time": 0.0,
-            "total_programs": 0,
-            "valid_programs": 0,
-            "failed_programs": 0,
-            "avg_quality_score": 0.0,
-            "avg_coverage_percent": 0.0,
-            "low_ks_file_count": 0,
-            "ks_low_threshold": args.ks_low_threshold,
-            "total_prompt_tokens": 0,
-            "total_completion_tokens": 0,
-            "total_tokens": 0,
-        }, [], []
+        return
 
     mutation_prompt_file = "mutate_prompt_template.txt"
     mutation_prompt_path = os.path.join(args.prompt_dir, mutation_prompt_file)
     if not os.path.exists(mutation_prompt_path):
         mutation_logger.log(f"Mutation prompt missing at {mutation_prompt_path}")
         print(f"Error: Mutation prompt file '{mutation_prompt_path}' not found. Skipping mutation phase.")
-        return [], {
-            "model": model,
-            "total_cost": 0.0,
-            "total_time": 0.0,
-            "total_programs": 0,
-            "valid_programs": 0,
-            "failed_programs": 0,
-            "avg_quality_score": 0.0,
-            "avg_coverage_percent": 0.0,
-            "low_ks_file_count": 0,
-            "ks_low_threshold": args.ks_low_threshold,
-            "total_prompt_tokens": 0,
-            "total_completion_tokens": 0,
-            "total_tokens": 0,
-        }, [], []
+        return
 
     try:
         with open(mutation_prompt_path, 'r', encoding='utf-8') as f:
@@ -620,9 +584,9 @@ def run_mutation_phase(model, files, args, common_run_dir, logfile_path, logger=
     stats_list = []
     metrics_rows = []
     report_entries = []
-    successful_pool = list(files)
-    successful_files = []
+    successful_pool = set(files)
 
+    # Main mutation and fixing loops
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_workers) as executor:
         futures = {}
         for i in range(mutation_count):
@@ -682,8 +646,7 @@ def run_mutation_phase(model, files, args, common_run_dir, logfile_path, logger=
 
                 if success and save_path:
                     abs_path = os.path.abspath(save_path)
-                    successful_files.append(abs_path)
-                    successful_pool.append(abs_path)
+                    successful_pool.add(abs_path)
 
                 metrics_rows.append(build_metrics_row(
                     model, file_name, success, execution_metrics, compilation_metrics
@@ -709,67 +672,19 @@ def run_mutation_phase(model, files, args, common_run_dir, logfile_path, logger=
         mutation_logger.log(f"Saved {len(metrics_rows)} mutation run metrics rows to {metrics_csv_path}")
 
     total_time = time.time() - start_time
-    total_cost = sum(s.cost for s in stats_list)
-    quality_scores = [s.quality_score for s in stats_list if s.quality_score is not None]
-    avg_quality = sum(quality_scores) / len(quality_scores) if quality_scores else 0
-
-    total_prompt_tokens = sum(s.prompt_tokens for s in stats_list)
-    total_completion_tokens = sum(s.completion_tokens for s in stats_list)
-    total_tokens = sum(s.total_tokens for s in stats_list)
-
-    successful_entries = [e for e in report_entries if e.get("success")]
-    avg_time_per_valid = total_time / len(successful_entries) if successful_entries else 0
-    successful_coverages = [float(e.get("coverage_percent", 0.0) or 0.0) for e in successful_entries]
-    avg_coverage_percent = sum(successful_coverages) / len(successful_coverages) if successful_coverages else 0.0
-    low_ks_file_count = sum(1 for e in report_entries if e.get("low_ks_test_levels"))
-    valid_count = len(successful_entries)
-
-    summary_log = f"""
-============================================================
-  MUTATION SUMMARY for {model}
-------------------------------------------------------------
-  Target Number of Programs : {mutation_count}
-  Total Valid Programs     : {valid_count}
-  Total Time Taken         : {total_time:.2f} seconds
-  Avg Time per Valid Prog  : {avg_time_per_valid:.2f} seconds
-  Avg Quality Score        : {avg_quality:.4f}
-------------------------------------------------------------
-  Total Cost (Estimated)   : ${total_cost:.6f}
-  Total Prompt Tokens      : {total_prompt_tokens}
-  Total Completion Tokens  : {total_completion_tokens}
-  Total Tokens             : {total_tokens}
-============================================================
-"""
+    summary_log, summary = build_phase_summary(
+        "MUTATION",
+        model,
+        mutation_count,
+        total_time,
+        stats_list,
+        report_entries,
+        args.ks_low_threshold,
+    )
     mutation_logger.log(summary_log)
-
-    summary = {
-        "model": model,
-        "total_cost": total_cost,
-        "total_time": total_time,
-        "total_programs": mutation_count,
-        "valid_programs": valid_count,
-        "failed_programs": max(0, mutation_count - valid_count),
-        "avg_quality_score": avg_quality,
-        "avg_coverage_percent": avg_coverage_percent,
-        "low_ks_file_count": low_ks_file_count,
-        "ks_low_threshold": args.ks_low_threshold,
-        "total_prompt_tokens": total_prompt_tokens,
-        "total_completion_tokens": total_completion_tokens,
-        "total_tokens": total_tokens,
-    }
-
     metrics = [{'model': model, 'metrics': s.metrics} for s in stats_list if s.metrics]
 
-    deduped_pool = []
-    seen_paths = set()
-    for file_path in successful_pool:
-        abs_path = os.path.abspath(file_path)
-        if abs_path in seen_paths:
-            continue
-        seen_paths.add(abs_path)
-        deduped_pool.append(abs_path)
-
-    return deduped_pool, summary, metrics, report_entries
+    return sorted(successful_pool), summary, metrics, report_entries
 
 def assemble_circuits(model, files, args, base_dir, logger=None):
     """
@@ -778,6 +693,7 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
     assembled file only when it is `interesting` (low KS or runtime error)
     """
     out_dir = os.path.join(base_dir, "assembled")
+    metrics_csv_path = os.path.join(base_dir, "assembled_execution_metrics.csv")
     os.makedirs(out_dir, exist_ok=True)
     model_name = sanitize_model_name(model)
     seen = set()
@@ -791,9 +707,7 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
             break
 
         # Ensure we don't try to pick more files than exist, or if n_circuits_per_assembly is somehow < 1
-        max_k = min(args.n_circuits_per_assembly, len(files))
-        if max_k < 1:
-            max_k = 1
+        max_k = max(min(args.n_circuits_per_assembly, len(files)), 1)
         k = random.randint(1, max_k)
         selection = tuple(random.sample(files, k))
         if selection in seen:
@@ -813,40 +727,30 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
 
             assemble(list(selection), out_path, count, args.language)
 
-            # Read assembled source
-            try:
-                with open(out_path, 'r', encoding='utf-8') as f:
-                    assembled_code = f.read()
-            except Exception:
-                # Can't read assembled file; remove and skip
-                try:
-                    os.remove(out_path)
-                except Exception:
-                    pass
-                continue
+            with open(out_path, 'r', encoding='utf-8') as f:
+                assembled_code = f.read()
 
-            # Run the assembled program to collect metrics and KS output
+            # Run the assembled program to collect metrics and KS output.
             error, output, metrics, runtime_code = run_generated_program(
-                assembled_code, language=args.language, source_file_path=out_path, circuit_id=None
+                assembled_code, language=args.language, source_file_path=out_path, circuit_id=count
             )
             ks_results = extract_ks_test_results(output)
             low_ks_values = find_low_ks_values(ks_results, args.ks_low_threshold) if ks_results else []
-            assembly_interesting = bool(low_ks_values) or (error and error.strip())
 
             # Build and persist a metrics row for this assembled candidate so
             # downstream tooling (reports/CSV) see the execution regardless of
             # whether the assembled source is kept or deleted.
-            success = not (error and error.strip())
             file_name = os.path.basename(out_path)
             execution_metrics = metrics or {}
             compilation_metrics = execution_metrics.get("compilation", {}) if metrics else {}
+            runtime_error_full = str(execution_metrics.get("error_full") or error or "").strip()
+            runtime_error_summary = str(execution_metrics.get("error_summary") or error or "").strip()
+            if not runtime_error_summary and runtime_error_full:
+                summary_lines = [line.strip() for line in runtime_error_full.splitlines() if line.strip()]
+                runtime_error_summary = summary_lines[-1] if summary_lines else runtime_error_full
 
-            error_details = build_error_details(
-                [{
-                    "error": execution_metrics.get("error_summary") or summarize_errors([error]),
-                    "error_full": execution_metrics.get("error_full") or (error or ""),
-                }]
-            )
+            assembly_interesting = bool(low_ks_values) or bool(runtime_error_full)
+            success = not bool(runtime_error_full)
 
             metrics_rows.append(build_metrics_row(
                 model, file_name, success, execution_metrics, compilation_metrics
@@ -862,15 +766,17 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
             })
 
             if logger:
-                if error and error.strip():
-                    logger.log(f"{file_name} Assembly Runtime Error:\n{error}\n")
+                if runtime_error_full:
+                    logger.log(f"{file_name} Assembly Runtime Error: {runtime_error_summary}")
+                    if args.verbose:
+                        logger.log(f"{file_name} Assembly Runtime Error Details:\n{runtime_error_full}\n")
                 elif low_ks_values:
                     low_text = ", ".join([f"L{level}={value:.6g}" for level, value in low_ks_values])
                     logger.log(
                         f"{file_name} LOW KS detected (threshold={args.ks_low_threshold}): {low_text}"
                     )
                 else:
-                    logger.log(f"{file_name} assembled successfully but was uninteresting.")
+                    logger.log(f"{file_name} assembled successfully.")
 
                 if output:
                     logger.log(f"--- {file_name} Output ---\n{output}\n--------------------------\n")
@@ -896,7 +802,6 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
     # Persist metrics rows collected for assembled runs so they appear in
     # the common execution metrics CSV alongside generation runs.
     try:
-        metrics_csv_path = os.path.join(base_dir, "assembled_execution_metrics.csv")
         if metrics_rows:
             append_rows_to_csv(metrics_csv_path, metrics_rows)
             if logger:
@@ -1026,10 +931,16 @@ def main():
 
             if mutation_summary is not None:
                 mutation_all_stats.append(mutation_summary)
+            else:
+                main_logger.log(f"Mutation phase for {model} did not produce a summary.")
             if mutation_metrics:
                 mutation_all_metrics.extend(mutation_metrics)
+            else:
+                main_logger.log(f"Mutation phase for {model} did not produce any metrics.")
             if mutation_reports:
                 all_reports.append({"model": f"{model}::mutation", "entries": mutation_reports})
+            else:
+                main_logger.log(f"Mutation phase for {model} did not produce any report entries.")
 
         # Union generated and mutated files using absolute paths
         assembly_files = list(files)

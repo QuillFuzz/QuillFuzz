@@ -73,10 +73,17 @@ class Base():
         return False
 
     def _counts_from_qsys_raw(self, raw_counts: Counter[Tuple[Any, ...], int]) -> Counter[int, int]:
-        counts = Counter({
-            ''.join([str(measurement[1]) for measurement in key]): value
-            for key, value in raw_counts.items()
-        })
+        counts = Counter()
+        for key, value in raw_counts.items():
+            pieces = []
+            for measurement in key:
+                try:
+                    piece = measurement[1]
+                except Exception:
+                    piece = measurement
+                pieces.append(str(piece))
+            joined = ''.join(pieces)
+            counts[joined] = value
         return self.preprocess_counts(counts)
 
     def preprocess_counts(self, counts: Counter[Tuple[str, ...], int]) -> Counter[int, int]:
