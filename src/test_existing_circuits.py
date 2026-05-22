@@ -18,11 +18,11 @@ from utils.utils import generate_complexity_scatter_plots
 from utils.reporting import (
     Logger,
     StreamingMetricsCsvWriter,
-    extract_ks_test_results,
-    find_low_ks_values,
     flatten_metrics_for_csv,
     ensure_clean_file,
     build_error_details,
+    format_low_ks_values,
+    populate_ks_test_metrics,
 )
 
 
@@ -198,14 +198,9 @@ def process_single_file(
     )
     execution_metrics = execution_metrics or {}
 
-    ks_results = extract_ks_test_results(run_stdout)
-    if ks_results:
-        execution_metrics["ks_test_p_values"] = ks_results
-
-    low_ks_test_levels = find_low_ks_values(ks_results, ks_low_threshold)
+    low_ks_test_levels = populate_ks_test_metrics(execution_metrics, run_stdout, ks_low_threshold)
     if low_ks_test_levels:
-        execution_metrics["low_ks_test_levels"] = low_ks_test_levels
-        low_text = ", ".join([f"L{level}={value:.6g}" for level, value in low_ks_test_levels])
+        low_text = format_low_ks_values(low_ks_test_levels)
         log_line(f"LOW KS detected for {filename} (threshold={ks_low_threshold}): {low_text}")
 
     metrics["execution"] = execution_metrics

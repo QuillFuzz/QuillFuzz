@@ -21,12 +21,12 @@ from utils.execution import run_generated_program, compile_generated_program
 from utils.reporting import (
     Logger,
     build_phase_summary,
-    extract_ks_test_results,
-    find_low_ks_values,
+    format_low_ks_values,
     append_rows_to_csv,
     build_error_details,
     summarize_errors,
     build_metrics_row,
+    populate_ks_test_metrics,
 )
 
 SUPPORTED_LANGUAGES = ("guppy", "qiskit", "pytket", "pennylane")
@@ -146,16 +146,11 @@ class ProgramProcessor:
         metrics = metrics or {}
         self.stats.metrics['execution'] = metrics
 
-        ks_results = extract_ks_test_results(output)
-        if ks_results:
-            metrics['ks_test_p_values'] = ks_results
-            low_ks_values = find_low_ks_values(ks_results, self.config.ks_low_threshold)
-            metrics['low_ks_test_levels'] = low_ks_values
-            if low_ks_values:
-                low_text = ", ".join([f"L{level}={value:.6g}" for level, value in low_ks_values])
-                self.logger.log(
-                    f"{self.filename} LOW KS detected (threshold={self.config.ks_low_threshold}): {low_text}"
-                )
+        low_ks_values = populate_ks_test_metrics(metrics, output, self.config.ks_low_threshold)
+        if low_ks_values:
+            self.logger.log(
+                f"{self.filename} LOW KS detected (threshold={self.config.ks_low_threshold}): {format_low_ks_values(low_ks_values)}"
+            )
         
         # Store execution quality score separately
         self.stats.execution_quality_score = metrics.get('quality_score', 0.0)
@@ -734,8 +729,7 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
             error, output, metrics, runtime_code = run_generated_program(
                 assembled_code, language=args.language, source_file_path=out_path, circuit_id=count
             )
-            ks_results = extract_ks_test_results(output)
-            low_ks_values = find_low_ks_values(ks_results, args.ks_low_threshold) if ks_results else []
+            low_ks_values = populate_ks_test_metrics(execution_metrics, output, args.ks_low_threshold)
 
             # Build and persist a metrics row for this assembled candidate so
             # downstream tooling (reports/CSV) see the execution regardless of
@@ -771,7 +765,7 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
                     if args.verbose:
                         logger.log(f"{file_name} Assembly Runtime Error Details:\n{runtime_error_full}\n")
                 elif low_ks_values:
-                    low_text = ", ".join([f"L{level}={value:.6g}" for level, value in low_ks_values])
+                    low_text = format_low_ks_values(low_ks_values)
                     logger.log(
                         f"{file_name} LOW KS detected (threshold={args.ks_low_threshold}): {low_text}"
                     )

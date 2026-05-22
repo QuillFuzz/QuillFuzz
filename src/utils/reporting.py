@@ -159,6 +159,23 @@ def find_low_ks_values(ks_results: Dict[str, float], threshold: float) -> List[T
     return sorted(lows, key=lambda item: int(item[0]))
 
 
+def populate_ks_test_metrics(metrics: Dict[str, Any], output: str, threshold: float) -> List[Tuple[str, float]]:
+    ks_results = extract_ks_test_results(output)
+    if not ks_results:
+        return []
+
+    metrics["ks_test_p_values"] = ks_results
+    low_ks_values = find_low_ks_values(ks_results, threshold)
+    if low_ks_values:
+        metrics["low_ks_test_levels"] = low_ks_values
+
+    return low_ks_values
+
+
+def format_low_ks_values(low_ks_values: List[Tuple[str, float]]) -> str:
+    return ", ".join(f"L{level}={value:.6g}" for level, value in low_ks_values)
+
+
 def ensure_clean_file(path: str):
     directory = os.path.dirname(path)
     if directory:
