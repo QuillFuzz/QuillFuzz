@@ -139,10 +139,10 @@ def _compute_quality_score(metrics: Dict[str, Any]) -> float:
     nesting_depth = metrics.get("nesting_depth", 0)
     return (
         cov
-        + (w_time * 2.0)
+        + (w_time * 1.0)
         + (func_count * 1.0)
-        + (line_count * 0.1)
-        + (nesting_depth * 2.0)
+        + (line_count * 0.2)
+        + (nesting_depth * 1.0)
     )
 
 

@@ -2,10 +2,12 @@
 language: guppy
 # LLM models to use for generation of quantum programs
 models:
+  # - anthropic/claude-sonnet-4-5 
+  # - openai/gpt-5-mini 
+  - openai/gpt-5.4-nano
+  # - google/gemini-3.5-flash
+  # - google/gemini-3.1-pro-preview
   - deepseek/deepseek-v4-flash
-  # - anthropic/claude-haiku-4-5
-  # - openai/gpt-5-mini
-  # - openai/gpt-5.4-nano
 
 n_programs: 2
 n_fixing_cycles: 3

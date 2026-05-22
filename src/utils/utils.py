@@ -311,7 +311,7 @@ def generate_complexity_scatter_plots(all_metrics, output_dir):
     # Plot 2-4: Three 2D perspectives for execution/compilation/coverage
     points_3d = [
         r for r in records
-        if r['execution_time'] is not None and r['compilation_time'] is not None
+        if r['execution_time'] is not None and r['compilation_time'] is not None and r['coverage_percent'] is not None
     ]
 
     if points_3d:

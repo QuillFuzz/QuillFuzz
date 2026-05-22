@@ -890,13 +890,13 @@ def main():
 
     # Start of main training, proudction and mutation loops
     all_stats = []
-    all_metrics = []
     all_reports = []
     main_logger = Logger(logfile_path)
-    assembled_all_metrics = []
     assembled_all_stats = []
     mutation_all_stats = []
     mutation_all_metrics = []
+    generated_metrics_by_model = {}
+    assembled_metrics_by_model = {}
 
     for model in args.models:
         # Train
@@ -913,7 +913,7 @@ def main():
             model, best_prompt, args, common_run_dir, logfile_path, main_logger
         )
         all_stats.append(summary)
-        all_metrics.extend(metrics)
+        generated_metrics_by_model[model] = metrics
         all_reports.append({"model": model, "entries": report_entries})
 
         # Mutate generated files from production phase, strictly adding to pool of files for assembly
@@ -958,7 +958,7 @@ def main():
 
             # Collect assembled metrics for cross-model plots
             if assembled_metrics:
-                assembled_all_metrics.extend(assembled_metrics)
+                assembled_metrics_by_model[model] = assembled_metrics
                 # Build a minimal summary for assembled results per model
                 assembled_all_stats.append({
                     'model': model,
@@ -971,8 +971,14 @@ def main():
 
     if all_stats:
         generate_summary_plot(all_stats, os.path.join(common_run_dir, "plots", "performance"))
-    if all_metrics:
-        generate_complexity_scatter_plots(all_metrics, os.path.join(common_run_dir, "plots", "complexity"))
+
+    generated_complexity_root = os.path.join(common_run_dir, "plots", "complexity")
+    for model, model_metrics in generated_metrics_by_model.items():
+        if model_metrics:
+            generate_complexity_scatter_plots(
+                model_metrics,
+                os.path.join(generated_complexity_root, sanitize_model_name(model)),
+            )
 
     # Plots for mutation circuits
     if mutation_all_stats:
@@ -983,9 +989,14 @@ def main():
     # Plots for assembled circuits (separate folder)
     if assembled_all_stats:
         generate_summary_plot(assembled_all_stats, os.path.join(common_run_dir, "assembled_plots", "performance"))
-    if assembled_all_metrics:
-        # assembled_all_metrics is list of dicts with 'metrics' key already
-        generate_complexity_scatter_plots(assembled_all_metrics, os.path.join(common_run_dir, "assembled_plots", "complexity"))
+
+    assembled_complexity_root = os.path.join(common_run_dir, "assembled_plots", "complexity")
+    for model, model_metrics in assembled_metrics_by_model.items():
+        if model_metrics:
+            generate_complexity_scatter_plots(
+                model_metrics,
+                os.path.join(assembled_complexity_root, sanitize_model_name(model)),
+            )
 
     performance_summary_path = os.path.join(common_run_dir, "performance_summary.json")
     performance_summary = {
