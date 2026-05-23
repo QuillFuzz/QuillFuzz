@@ -47,7 +47,7 @@ class guppyTesting(Base):
 
         return list(selected.items())
 
-    def ks_diff_test(self, circuit: Any, circuit_number: int, n_qubits: int = 10) -> None:
+    def ks_diff_test(self, circuit: Any, circuit_number: int, n_qubits: int = 15) -> None:
         hugr = None
 
         def compile_circuit():

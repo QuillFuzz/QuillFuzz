@@ -6,22 +6,20 @@
 
 1. **Control Flow Injection:**
     
-    - If a function is marked `@guppy` (and does not use `pi`), introduce branching on measurement results (e.g., `if measure_and_reset(q):`).
+    - If a function is marked `@guppy` (and does not use `pi`), introduce conditional branching on measurement results.
         
-    - If a function is marked `@guppy.comptime`, introduce loops with hardcoded ranges (e.g., `for i in range(3):`). **Critical:** Do NOT use loop variables to index arrays.
+    - If a function is marked `@guppy.comptime`, introduce loops with hardcoded ranges. **Critical:** Do NOT use loop variables to index arrays.
         
-2. **Gate Complexity:** Identify simple gate structures and replace them with multi-qubit gates (`toffoli`, `crz`, `ch`). **Critical:** You must ensure the qubits passed to these gates are distinct (no aliasing).
+2. **Gate Complexity:** Identify simple gate structures and replace them with multi-qubit gates. **Critical:** You must ensure the qubits passed to these gates are distinct (no aliasing).
     
 3. **Additional Gate Injection:** Inject random valid gates into the functions to increase depth.
     
-4. **Mid-Circuit Measurement:** Inject `measure_and_reset(q)` calls in the middle of functions to test qubit reuse and non-destructive measurement.
+4. **Mid-Circuit Measurement:** Inject non-destructive measure and reset calls in the middle of functions to test qubit reuse and mid-circuit evaluation.
     
 5. **Inter-Function Dependency:** Extract inline logic into a new helper function and call it. **Critical:** Adhere to the strict array passing rules below.
     
-6. **Variable Complexity:** Inject deterministic classical variables (integers/floats) and use them in rotation angles (e.g., `rz(q, angle(my_val))`).
+6. **Variable Complexity:** Inject deterministic classical variables (integers/floats) and use them as parameters in rotation angles.
     
-
----
 
 ### **Strict Constraints (Violation = Compilation Failure)**
 
@@ -36,71 +34,59 @@
 
 **2. Strictly Permitted Control Flow & Typing**
 
-- **Allowed:** Branching on measurement results (e.g., `measure_and_reset`) **ONLY** inside `@guppy` functions.
+- **Allowed:** Branching on measurement results **ONLY** inside `@guppy` functions.
     
-- **Allowed:** Loops with hardcoded integer literals (e.g., `range(4)`).
+- **Allowed:** Loops with hardcoded integer literals.
     
-- **FORBIDDEN:** Branching on function arguments (e.g., `def func(x: int): if x > 0:`). Arguments are symbolic/runtime values.
+- **FORBIDDEN:** Branching on function arguments. Arguments are symbolic/runtime values.
     
 - **FORBIDDEN:** Branching on measurement results inside `@guppy.comptime`.
     
-- **Strict Typing:** Booleans cannot be equated with integers (e.g., `if True == 1` is strictly illegal).
+- **Strict Typing:** Booleans cannot be equated with integers. Use standard boolean evaluation.
     
 
 **3. Function Call & Array Passing (CRITICAL)**
 
-- **Inside `@guppy` functions:** You **CANNOT** construct arrays/lists in the function call. You **MUST** pass a pre-existing, named array variable.
+- **Inside `@guppy` functions:** You **CANNOT** construct arrays/lists directly within the function call parameters. You **MUST** pass a pre-existing, named array variable.
     
-    - _Illegal:_ `helper(array(q1, q2))` or `helper([q1, q2])`
-        
-    - _Legal:_ `helper(my_qreg)`
-        
-- **Inside `@guppy.comptime` functions:** You **ARE ALLOWED** to construct temporary lists using Python list syntax `[]`.
+- **Inside `@guppy.comptime` functions:** You **ARE ALLOWED** to construct temporary lists using Python list syntax `[]` directly in the function call.
     
-    - _Legal:_ `helper([q1, qreg[0]])`
-        
 
 **4. Array Indexing Rules (STRICT ENFORCEMENT)**
 
 - **Literal Indices Only:** Indexing a qubit array with runtime-evaluated variables (like loop counters) is **PROHIBITED**. You **MUST ONLY** use integer literals for indices.
     
-    - _Illegal:_ `qreg[i]`
-        
-    - _Legal:_ `qreg[0]`, `qreg[2]`
-        
 
-**5. Gate & Qubit Uniqueness**
+**5. Gate & Qubit Uniqueness & Allocation Limits**
 
-- **Distinct Arguments:** For multi-qubit gates (`cx`, `toffoli`, etc.) or function calls, the arguments must be distinct physical qubits (no double borrowing).
+- **Distinct Arguments:** For multi-qubit gates or function calls, the arguments must be distinct physical qubits (no double borrowing).
     
-    - _Illegal:_ `cx(q1, q1)` (Aliasing)
-        
-- **Fresh Instantiation:** New arrays must contain _new_ `qubit()` calls, not existing variables.
+- **Fresh Instantiation:** New arrays must contain newly instantiated qubits, not existing variables or array elements. These are "owned" qubits and must be measured.
     
-    - _Illegal:_ `qreg1 = array(qubit1, qreg0[0])`
+    - **Forbidden Syntax:** `qreg1 = array(qubit1, qreg0[0])` _(ILLEGAL: qubit1 is already defined)_ | `q_new = qubit_old` _(ILLEGAL: No aliasing allowed)_
         
-    - _Legal:_ `qreg1 = array(qubit() for _ in range(2))`
+    - **Allowed Syntax (Generators Only):** `qreg1 = array(qubit() for _ in range(2))` _(VALID: Creates fresh instances)_ | `qubit1 = qubit()` _(VALID: Defining single qubits)_ | `num_qubits = 4; qreg0 = array(qubit() for _ in range(num_qubits))` _(VALID: Register with hardcoded ints)_
         
+- **Qubit Allocation Limit:** You must limit the amount of new qubits declared in each function scope such that the total amount of new qubits allocated throughout all functions combined does not exceed 15.
+    
 
 **6. Measurement Rules**
 
-- `measure(q)`: Standalone qubits only. **Destructive**.
+- **Destructive Single Measure:** Standalone qubits only. Consumes the qubit.
     
-- `measure_array(arr)`: Full registers only. **Destructive**.
+- **Destructive Array Measure:** Full registers only. Consumes the entire register.
     
-- `measure_and_reset(q)`: Standalone or `arr[i]`. **Non-destructive** (keeps qubit alive).
+- **Non-destructive Measure and Reset:** Standalone qubits or specific array elements. Keeps the qubit alive.
     
-- **ILLEGAL:** `measure(arr[i])`. You cannot use the standard measure on array elements.
+- **ILLEGAL:** You cannot use the standard destructive single measurement on array elements.
     
 
 **7. Main Function Restrictions**
 
-- If you mutate the `main` function (which acts as the entry point for external borrowed qubits), you **MUST NOT** instantiate new internal qubits (via `qubit()` or `array(...)`) inside `main`.
+- If you mutate the main function (which acts as the entry point for external borrowed qubits), you **MUST NOT** instantiate new internal qubits inside it.
     
-- You **MUST NOT** destructively measure borrowed qubits in `main` (do not use `measure` or `measure_array` in `main`). `measure_and_reset` is allowed.
+- You **MUST NOT** destructively measure borrowed qubits in the main function. Non-destructive measurements are allowed.
     
-
----
 
 ### **Guppy Language Reference (Cheatsheet)**
 
@@ -112,7 +98,7 @@ Python
 ```
     from guppylang.decorator import guppy
     from guppylang.std.angles import angle
-    from guppylang.std.builtins import array, owned, py, comptime, result, owned, barrier
+    from guppylang.std.builtins import array, owned, py, comptime, result, barrier
     from guppylang.std.quantum import *
     from guppylang.std.qsystem import *
     from math import pi
@@ -135,4 +121,8 @@ Python
 
 **Input Code to Mutate:**
 
+Python
+
+```
 {{input_code}}
+```
