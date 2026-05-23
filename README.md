@@ -114,39 +114,17 @@ Then run the desired script inside the container:
 ./scripts/Complete_run_pytket.sh
 ```
 
-### Detached Campaigns
+# Bugs found
 
-If you want a campaign to keep running after you disconnect from SSH, start it from the host and write logs to the mounted project directory. These commands apply to the standalone `quillfuzz` container; if you are using Compose, replace them with `docker compose exec quillfuzz ...`.
-
-```bash
-mkdir -p logs
-
-docker exec -d quillfuzz bash -lc 'cd /QuillFuzz && ./scripts/Complete_run_guppy.sh > /QuillFuzz/logs/guppy_run.log 2>&1'
-
-podman exec -d quillfuzz bash -lc 'cd /QuillFuzz && ./scripts/Complete_run_guppy.sh > /QuillFuzz/logs/guppy_run.log 2>&1'
-```
-
-Use the same pattern for Qiskit and Pytket by swapping the script and log filename. To monitor a detached run:
-
-```bash
-docker exec quillfuzz pgrep -af Complete_run_guppy.sh
-docker exec quillfuzz tail -f /QuillFuzz/logs/guppy_run.log
-
-podman exec quillfuzz pgrep -af Complete_run_guppy.sh
-podman exec quillfuzz tail -f /QuillFuzz/logs/guppy_run.log
-```
-
-Stop a detached run with the matching engine:
-
-```bash
-docker exec quillfuzz pkill -f Complete_run_guppy.sh
-podman exec quillfuzz pkill -f Complete_run_guppy.sh
-```
-
-### Reports-only Analysis (No Generation)
-
-To run coverage analysis and generate complexity plots for an existing directory of circuit files:
-
-```bash
-python src/generate_coverage_and_complexity.py <input_dir> --language guppy
-```
+| Issue | Language | Status | Notes |
+|---|---|---|---|
+| [Qiskit/qiskit-aer#2404](https://github.com/Qiskit/qiskit-aer/issues/2404) | Qiskit | Open | Not fixed |
+| [Qiskit/qiskit#15734](https://github.com/Qiskit/qiskit/issues/15734) | Qiskit | Fixed |  |
+| [Qiskit/qiskit#15748](https://github.com/Qiskit/qiskit/issues/15748) | Qiskit | Fixed |  |
+| [Qiskit/qiskit#15747](https://github.com/Qiskit/qiskit/issues/15747) | Qiskit | Fixed (duplicate) | Same cause as #15748 |
+| [Qiskit/qiskit#15733](https://github.com/Qiskit/qiskit/issues/15733) | Qiskit | In progress (duplicate) | Being fixed |
+| [Qiskit/qiskit#16223](https://github.com/Qiskit/qiskit/issues/16223) | Qiskit | In progress | Being fixed |
+| [Quantinuum/tket2#1604](https://github.com/Quantinuum/tket2/issues/1604) | Guppy | In progress (duplicate) | Being fixed |
+| [Quantinuum/tket2#1577](https://github.com/Quantinuum/tket2/issues/1577) | Guppy | Fixed |  |
+| [Quantinuum/tket2#1375](https://github.com/Quantinuum/tket2/issues/1375) | Guppy | In progress | Fixing |
+| [Quantinuum/guppylang#1442](https://github.com/Quantinuum/guppylang/issues/1442) | Guppy | Fixed |  |
