@@ -73,8 +73,9 @@ class guppyTesting(Base):
             return
 
         try:
+            shots = self.shots(1000)
             runner = build(hugr.to_bytes())
-            results = QsysResult(runner.run_shots(Quest(), n_qubits=n_qubits, n_shots=1000))
+            results = QsysResult(runner.run_shots(Quest(), n_qubits=n_qubits, n_shots=shots))
             raw_counts = results.collated_counts()
             if not raw_counts:
                 print(f"Warning: No counts collected for circuit {circuit_number}")
@@ -133,7 +134,7 @@ class guppyTesting(Base):
                 hugr_opt = apply_pass_with_fallback(pass_name, pass_factory, hugr_base)
 
                 runner_opt = build(hugr_opt.to_bytes())
-                results_opt = QsysResult(runner_opt.run_shots(Quest(), n_qubits=n_qubits, n_shots=1000))
+                results_opt = QsysResult(runner_opt.run_shots(Quest(), n_qubits=n_qubits, n_shots=shots))
                 raw_counts_opt = results_opt.collated_counts()
                 counts_opt = self._counts_from_qsys_raw(raw_counts_opt)
 
@@ -144,7 +145,7 @@ class guppyTesting(Base):
                         self.save_interesting_circuit(circuit_number)
                     continue
 
-                ks_value = self.ks_test(counts_base, counts_opt, 1000)
+                ks_value = self.ks_test(counts_base, counts_opt, shots)
                 print(f"Pass {pass_name} ks-test p-value: {ks_value}")
 
                 if ks_value < self.KS_THRESHOLD:

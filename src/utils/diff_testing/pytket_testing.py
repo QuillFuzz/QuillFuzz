@@ -90,8 +90,9 @@ class pytketTesting(Base):
         backend = AerBackend()
 
         try:
+            shots_local = self.shots(shots)
             baseline_circ = backend.get_compiled_circuit(circuit.copy(), optimisation_level=0)
-            baseline_handle = backend.process_circuit(baseline_circ, n_shots=shots)
+            baseline_handle = backend.process_circuit(baseline_circ, n_shots=shots_local)
             baseline_result = backend.get_result(baseline_handle)
             counts1 = self.preprocess_counts(baseline_result.get_counts())
 
@@ -105,11 +106,11 @@ class pytketTesting(Base):
                 tket_pass = pass_factory()
                 tket_pass.apply(compiled_circ)
                 backend_circ = backend.get_compiled_circuit(compiled_circ, optimisation_level=0)
-                handle2 = backend.process_circuit(backend_circ, n_shots=shots)
+                handle2 = backend.process_circuit(backend_circ, n_shots=shots_local)
                 result2 = backend.get_result(handle2)
                 counts2 = self.preprocess_counts(result2.get_counts())
 
-                ks_value = self.ks_test(counts1, counts2, shots)
+                ks_value = self.ks_test(counts1, counts2, shots_local)
                 print(f"{pass_name} (#{i+1}) ks-test p-value: {ks_value}")
 
                 if ks_value < self.KS_THRESHOLD:
@@ -162,8 +163,9 @@ class pytketTesting(Base):
             except Exception:
                 pass
 
+            shots_local = self.shots(shots)
             runner = build(hugr_base.to_bytes())
-            results = QsysResult(runner.run_shots(Quest(), n_qubits=n_qubits, n_shots=shots))
+            results = QsysResult(runner.run_shots(Quest(), n_qubits=n_qubits, n_shots=shots_local))
             counts_base = self._counts_from_qsys_raw(results.collated_counts())
             if not counts_base:
                 print("No baseline counts generated for ks_diff_test_tket2.")
@@ -181,13 +183,13 @@ class pytketTesting(Base):
                     hugr_opt = pass_result.hugr
 
                     runner_opt = build(hugr_opt.to_bytes())
-                    results_opt = QsysResult(runner_opt.run_shots(Quest(), n_qubits=n_qubits, n_shots=shots))
+                    results_opt = QsysResult(runner_opt.run_shots(Quest(), n_qubits=n_qubits, n_shots=shots_local))
                     counts_opt = self._counts_from_qsys_raw(results_opt.collated_counts())
                     if not counts_opt:
                         print(f"Skipping {pass_name}: no counts after optimization")
                         continue
 
-                    ks_value = self.ks_test(counts_base, counts_opt, shots)
+                    ks_value = self.ks_test(counts_base, counts_opt, shots_local)
                     print(f"tket2:{pass_name} (#{i+1}) ks-test p-value: {ks_value}")
 
                     if ks_value < self.KS_THRESHOLD:
@@ -265,8 +267,9 @@ class pytketTesting(Base):
 
         try:
             compiled_circ = main.compile()
+            shots_local = self.shots(10000)
             runner = build(compiled_circ)
-            results = QsysResult(runner.run_shots(Quest(), n_qubits=circuit.n_qubits, n_shots=10000))
+            results = QsysResult(runner.run_shots(Quest(), n_qubits=circuit.n_qubits, n_shots=shots_local))
             counts_guppy = results.collated_counts()
             counts_guppy = Counter({''.join([measurement[1] for measurement in key]): value for key, value in counts_guppy.items()})
             counts_guppy = self.preprocess_counts(counts_guppy)
@@ -275,12 +278,12 @@ class pytketTesting(Base):
             backend = AerBackend()
             pytket_circ_copy.measure_all()
             uncompiled_pytket_circ = backend.get_compiled_circuit(pytket_circ_copy, optimisation_level=0)
-            handle = backend.process_circuit(uncompiled_pytket_circ, n_shots=10000)
+            handle = backend.process_circuit(uncompiled_pytket_circ, n_shots=shots_local)
             result_pytket = backend.get_result(handle)
             counts_pytket = self.preprocess_counts(result_pytket.get_counts())
             print("Pytket counts:", counts_pytket)
 
-            ks_value = self.ks_test(counts_guppy, counts_pytket, 10000)
+            ks_value = self.ks_test(counts_guppy, counts_pytket, shots_local)
             print(f"Guppy vs Pytket ks-test p-value: {ks_value}")
 
             if ks_value < self.KS_THRESHOLD:

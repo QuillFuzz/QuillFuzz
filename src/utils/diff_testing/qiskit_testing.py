@@ -16,14 +16,15 @@ class qiskitTesting(Base):
             backend = AerSimulator()
 
             circuit.measure_all()
+            shots = self.shots(10000)
             uncompiled_circ = transpile(circuit, backend, optimization_level=0)
-            counts1 = self.preprocess_counts(backend.run(uncompiled_circ, shots=10000).result().get_counts())
+            counts1 = self.preprocess_counts(backend.run(uncompiled_circ, shots=shots).result().get_counts())
 
             for i in range(3):
                 compiled_circ = transpile(circuit, backend, optimization_level=i + 1)
-                counts2 = self.preprocess_counts(backend.run(compiled_circ, shots=10000).result().get_counts())
+                counts2 = self.preprocess_counts(backend.run(compiled_circ, shots=shots).result().get_counts())
 
-                ks_value = self.ks_test(counts1, counts2, 10000)
+                ks_value = self.ks_test(counts1, counts2, shots)
                 print(f"Optimisation level {i+1} ks-test p-value: {ks_value}")
 
                 if ks_value < self.KS_THRESHOLD:

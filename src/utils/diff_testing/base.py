@@ -26,6 +26,13 @@ class Base():
         self.args = self.parser.parse_args()
         self.plot: bool = self.args.plot
         self.run_output_dir: pathlib.Path = self._resolve_run_output_dir()
+        # Debug mode - when enabled (via QUILLFUZZ_DEBUG env var) reduce shot counts for faster testing
+        debug_env = os.getenv("QUILLFUZZ_DEBUG", "0")
+        self.debug = str(debug_env).lower() in ("1", "true", "yes", "y", "on")
+
+    def shots(self, default_shots: int) -> int:
+        """Return a reduced shot count when debug mode is active, otherwise the default."""
+        return 10 if self.debug else int(default_shots)
 
     def _resolve_run_output_dir(self) -> pathlib.Path:
         env_run_dir = os.getenv("QUILLFUZZ_RUN_DIR")

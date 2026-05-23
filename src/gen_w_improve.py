@@ -714,28 +714,31 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
         out_path = os.path.join(out_dir, f"{model_name}_assembled_{count}.py")
 
         try:
-            if logger:
-                logger.log(
-                    f"[Assembly {count + 1}/{args.n_assemble}] Building candidate from {len(selection)} source file(s): "
-                    f"{', '.join(os.path.basename(path) for path in selection)}"
-                )
+            logger.log(
+                f"[Assembly {count + 1}/{args.n_assemble}] Building candidate from {len(selection)} source file(s): "
+                f"{', '.join(os.path.basename(path) for path in selection)}"
+            )
 
             assemble(list(selection), out_path, count, args.language)
 
             with open(out_path, 'r', encoding='utf-8') as f:
                 assembled_code = f.read()
 
+            logger.log(f"Preparing to run assembled candidate {os.path.basename(out_path)}...")
+
             # Run the assembled program to collect metrics and KS output.
             error, output, metrics, runtime_code = run_generated_program(
                 assembled_code, language=args.language, source_file_path=out_path, circuit_id=count
             )
-            low_ks_values = populate_ks_test_metrics(execution_metrics, output, args.ks_low_threshold)
+            logger.log(f"Execution completed for {os.path.basename(out_path)}. Processing results...")
 
             # Build and persist a metrics row for this assembled candidate so
             # downstream tooling (reports/CSV) see the execution regardless of
             # whether the assembled source is kept or deleted.
-            file_name = os.path.basename(out_path)
             execution_metrics = metrics or {}
+            low_ks_values = populate_ks_test_metrics(execution_metrics, output, args.ks_low_threshold)
+            file_name = os.path.basename(out_path)
+            
             compilation_metrics = execution_metrics.get("compilation", {}) if metrics else {}
             runtime_error_full = str(execution_metrics.get("error_full") or error or "").strip()
             runtime_error_summary = str(execution_metrics.get("error_summary") or error or "").strip()
@@ -759,21 +762,20 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
                 "file": file_name,
             })
 
-            if logger:
-                if runtime_error_full:
-                    logger.log(f"{file_name} Assembly Runtime Error: {runtime_error_summary}")
-                    if args.verbose:
-                        logger.log(f"{file_name} Assembly Runtime Error Details:\n{runtime_error_full}\n")
-                elif low_ks_values:
-                    low_text = format_low_ks_values(low_ks_values)
-                    logger.log(
-                        f"{file_name} LOW KS detected (threshold={args.ks_low_threshold}): {low_text}"
-                    )
-                else:
-                    logger.log(f"{file_name} assembled successfully.")
+            if runtime_error_full:
+                logger.log(f"{file_name} Assembly Runtime Error: {runtime_error_summary}")
+                if args.verbose:
+                    logger.log(f"{file_name} Assembly Runtime Error Details:\n{runtime_error_full}\n")
+            elif low_ks_values:
+                low_text = format_low_ks_values(low_ks_values)
+                logger.log(
+                    f"{file_name} LOW KS detected (threshold={args.ks_low_threshold}): {low_text}"
+                )
+            else:
+                logger.log(f"{file_name} assembled successfully.")
 
-                if output:
-                    logger.log(f"--- {file_name} Output ---\n{output}\n--------------------------\n")
+            if output:
+                logger.log(f"--- {file_name} Output ---\n{output}\n--------------------------\n")
 
             count += 1
             pbar.update(1)
@@ -784,7 +786,8 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
                 except Exception:
                     pass
 
-        except Exception:
+        except Exception as e:
+            logger.log(f"Error occurred while processing {out_path}: {e}")
             try:
                 if os.path.exists(out_path):
                     os.remove(out_path)
@@ -793,16 +796,20 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
             continue
 
     pbar.close()
+
+
     # Persist metrics rows collected for assembled runs so they appear in
     # the common execution metrics CSV alongside generation runs.
     try:
         if metrics_rows:
             append_rows_to_csv(metrics_csv_path, metrics_rows)
-            if logger:
-                logger.log(f"Saved {len(metrics_rows)} assembled run metrics to {metrics_csv_path}")
+            logger.log(f"Saved {len(metrics_rows)} assembled run metrics to {metrics_csv_path}")
+        else:
+            logger.log("No metrics collected from assembled runs to save.")
     except Exception as e:
-        if logger:
-            logger.log(f"Warning: failed to append assembled metrics CSV: {e}")
+        logger.log(f"Warning: failed to append assembled metrics CSV: {e}")
+
+
     # Return the list of assembled files and collected structured metrics
     assembled_files = []
     try:
@@ -811,7 +818,7 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
             if fname.startswith(prefix) and fname.endswith('.py'):
                 assembled_files.append(os.path.join(out_dir, fname))
     except Exception:
-        pass
+        logger.log(f"Warning: failed to list assembled files in {out_dir}")
 
     return assembled_files, assembled_metrics
 
@@ -844,6 +851,7 @@ def main():
         default=0.01,
         help="Threshold below which KS-test p-values are flagged as low in production reports.",
     )
+    parser.add_argument("--debug", action="store_true", default=False, help="Enable debug mode (reduces diff_testing shots)")
 
     # Parse args
     args, _ = parser.parse_known_args()
@@ -886,6 +894,7 @@ def main():
         sys.exit(3)
 
     os.environ["QUILLFUZZ_RUN_DIR"] = os.path.abspath(common_run_dir)
+    os.environ["QUILLFUZZ_DEBUG"] = "1" if args.debug else "0"
     logfile_path = os.path.join(common_run_dir, "execution.log")
 
     # Start of main training, proudction and mutation loops

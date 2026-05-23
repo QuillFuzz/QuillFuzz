@@ -166,6 +166,9 @@ class pennylaneTesting(Base):
             # Check if original device has shots (sampling mode)
             original_shots = getattr(original_device, 'shots', None)
 
+            # Determine shots to use (respect debug mode)
+            shots_local = self.shots(1000)
+
             # Try to create an alternative device with different configuration
             try:
                 # Attempt to use lightning.qubit for potentially different simulation
@@ -173,7 +176,7 @@ class pennylaneTesting(Base):
                 if original_shots is not None:
                     alt_device = qml.device('lightning.qubit', wires=n_wires, shots=original_shots)
                 else:
-                    alt_device = qml.device('lightning.qubit', wires=n_wires, shots=1000)
+                    alt_device = qml.device('lightning.qubit', wires=n_wires, shots=shots_local)
                 alt_qnode = qml.QNode(circuit_func, alt_device)
                 return alt_qnode
             except Exception:
@@ -184,7 +187,7 @@ class pennylaneTesting(Base):
                 if original_shots is not None:
                     alt_device = qml.device('default.qubit', wires=n_wires, shots=original_shots)
                 else:
-                    alt_device = qml.device('default.qubit', wires=n_wires, shots=1000)
+                    alt_device = qml.device('default.qubit', wires=n_wires, shots=shots_local)
                 alt_qnode = qml.QNode(circuit_func, alt_device)
                 return alt_qnode
             except Exception:
