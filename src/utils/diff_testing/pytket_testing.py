@@ -1,6 +1,5 @@
 from typing import Any, Optional, Callable, Dict, Tuple, List
 from collections import Counter
-import inspect
 import random
 import traceback
 from numpy.typing import NDArray
@@ -45,15 +44,10 @@ class pytketTesting(Base):
             "FlattenRegisters": FlattenRegisters,
         }
 
-    def _get_selected_passes(self, random_n: Optional[int]) -> List[Tuple[str, Callable[[], BasePass]]]:
-        
-        curated = self._curated_pass_registry()
-        selected = dict(curated)
-
-        if random_n is not None:
-            selected = dict(random.sample(list(selected.items()), min(random_n, len(selected))))
-
-        return list(selected.items())
+    def _get_selected_passes(self) -> List[Tuple[str, Callable[[], BasePass]]]:
+        selected = list(self._curated_pass_registry().items())
+        random.shuffle(selected)
+        return selected
 
     def _try_convert_pytket_circuit_to_hugr(self, circuit: Circuit) -> Tuple[Optional[Hugr], str]:
         attempts = []
@@ -83,43 +77,49 @@ class pytketTesting(Base):
         self,
         circuit: Circuit,
         circuit_number: int,
-        random_n: Optional[int] = None,
-        shots: int = 10000,
     ) -> float:
         ks_value = 1.0
         backend = AerBackend()
 
         try:
-            shots_local = self.shots(shots)
+            print(f"Running unoptimised circuit for baseline counts")
+            circuit.measure_all()
+            shots_local = self.shots(10000)
             baseline_circ = backend.get_compiled_circuit(circuit.copy(), optimisation_level=0)
             baseline_handle = backend.process_circuit(baseline_circ, n_shots=shots_local)
             baseline_result = backend.get_result(baseline_handle)
             counts1 = self.preprocess_counts(baseline_result.get_counts())
 
-            selected_passes = self._get_selected_passes(random_n)
+            print(f"Finished executing unoptimised circuit, now applying a randomized pass sequence")
+            selected_passes = self._get_selected_passes()
+
             if not selected_passes:
                 print("No passes selected for ks_diff_test; returning baseline p-value 1.0")
                 return ks_value
 
-            for i, (pass_name, pass_factory) in enumerate(selected_passes):
-                compiled_circ = circuit.copy()
+            print(f"Pass sequence for testing: {[name for name, _ in selected_passes]}")
+
+            compiled_circ = circuit.copy()
+            for pass_name, pass_factory in selected_passes:
+                print(f"Applying pass: {pass_name}")
                 tket_pass = pass_factory()
                 tket_pass.apply(compiled_circ)
-                backend_circ = backend.get_compiled_circuit(compiled_circ, optimisation_level=0)
-                handle2 = backend.process_circuit(backend_circ, n_shots=shots_local)
-                result2 = backend.get_result(handle2)
-                counts2 = self.preprocess_counts(result2.get_counts())
 
-                ks_value = self.ks_test(counts1, counts2, shots_local)
-                print(f"{pass_name} (#{i+1}) ks-test p-value: {ks_value}")
+            backend_circ = backend.get_compiled_circuit(compiled_circ, optimisation_level=0)
+            handle2 = backend.process_circuit(backend_circ, n_shots=shots_local)
+            result2 = backend.get_result(handle2)
+            counts2 = self.preprocess_counts(result2.get_counts())
 
-                if ks_value < self.KS_THRESHOLD:
-                    print(f"Interesting circuit found: {circuit_number}")
-                    self.save_interesting_circuit(circuit_number)
+            ks_value = self.ks_test(counts1, counts2, shots_local)
+            print(f"Randomized pass sequence ks-test p-value: {ks_value}")
 
-                if self.plot:
-                    self.plot_histogram(counts1, "Uncompiled Circuit Results", 0, circuit_number)
-                    self.plot_histogram(counts2, f"Tket_{pass_name}_Results", i + 1, circuit_number)
+            if ks_value < self.KS_THRESHOLD:
+                print(f"Interesting circuit found: {circuit_number}")
+                self.save_interesting_circuit(circuit_number)
+
+            if self.plot:
+                self.plot_histogram(counts1, "Uncompiled Circuit Results", 0, circuit_number)
+                self.plot_histogram(counts2, "Tket Optimized Sequence Results", 1, circuit_number)
 
         except Exception as e:
             print("Error during pytket differential testing:", e)
@@ -132,9 +132,8 @@ class pytketTesting(Base):
         self,
         circuit: Any,
         circuit_number: int,
-        random_n: Optional[int] = None,
-        shots: int = 1000,
     ) -> float:
+        
         ks_value = 1.0
         hugr_base: Optional[Hugr] = None
         conversion_path = ""
@@ -163,7 +162,7 @@ class pytketTesting(Base):
             except Exception:
                 pass
 
-            shots_local = self.shots(shots)
+            shots_local = self.shots(1000)
             runner = build(hugr_base.to_bytes())
             results = QsysResult(runner.run_shots(Quest(), n_qubits=n_qubits, n_shots=shots_local))
             counts_base = self._counts_from_qsys_raw(results.collated_counts())
@@ -171,36 +170,44 @@ class pytketTesting(Base):
                 print("No baseline counts generated for ks_diff_test_tket2.")
                 return ks_value
 
-            selected_passes = self._get_selected_passes(random_n)
+            selected_passes = self._get_selected_passes()
             if not selected_passes:
                 print("No passes selected for ks_diff_test_tket2; returning baseline p-value 1.0")
                 return ks_value
 
-            for i, (pass_name, pass_factory) in enumerate(selected_passes):
+            print(f"Pass sequence for tket2 testing: {[name for name, _ in selected_passes]}")
+
+            hugr_opt = hugr_base
+            for pass_name, pass_factory in selected_passes:
                 try:
                     wrapped_pass = PytketHugrPass(pass_factory())
-                    pass_result: PassResult = wrapped_pass.run(hugr_base, inplace=False)
+                    pass_result: PassResult = wrapped_pass.run(hugr_opt, inplace=False)
+                    if pass_result.hugr is None:
+                        raise RuntimeError(f"{pass_name} produced no HUGR result via PytketHugrPass")
                     hugr_opt = pass_result.hugr
-
-                    runner_opt = build(hugr_opt.to_bytes())
-                    results_opt = QsysResult(runner_opt.run_shots(Quest(), n_qubits=n_qubits, n_shots=shots_local))
-                    counts_opt = self._counts_from_qsys_raw(results_opt.collated_counts())
-                    if not counts_opt:
-                        print(f"Skipping {pass_name}: no counts after optimization")
-                        continue
-
-                    ks_value = self.ks_test(counts_base, counts_opt, shots_local)
-                    print(f"tket2:{pass_name} (#{i+1}) ks-test p-value: {ks_value}")
-
-                    if ks_value < self.KS_THRESHOLD:
-                        print(f"Interesting circuit found: {circuit_number}")
-                        self.save_interesting_circuit(circuit_number)
-
-                    if self.plot:
-                        self.plot_histogram(counts_base, "Tket2 Base Results", 0, circuit_number)
-                        self.plot_histogram(counts_opt, f"Tket2_{pass_name}_Results", i + 1, circuit_number)
+                    print(f"Applied pass: {pass_name}")
                 except Exception as pass_exc:
                     print(f"Skipping pass {pass_name} due to error: {pass_exc}")
+                    self.save_interesting_circuit(circuit_number)
+                    return ks_value
+
+            runner_opt = build(hugr_opt.to_bytes())
+            results_opt = QsysResult(runner_opt.run_shots(Quest(), n_qubits=n_qubits, n_shots=shots_local))
+            counts_opt = self._counts_from_qsys_raw(results_opt.collated_counts())
+            if not counts_opt:
+                print("No optimized counts generated for ks_diff_test_tket2.")
+                return ks_value
+
+            ks_value = self.ks_test(counts_base, counts_opt, shots_local)
+            print(f"Randomized pass sequence ks-test p-value: {ks_value}")
+
+            if ks_value < self.KS_THRESHOLD:
+                print(f"Interesting circuit found: {circuit_number}")
+                self.save_interesting_circuit(circuit_number)
+
+            if self.plot:
+                self.plot_histogram(counts_base, "Tket2 Base Results", 0, circuit_number)
+                self.plot_histogram(counts_opt, "Tket2 Optimized Sequence Results", 1, circuit_number)
 
         except Exception as e:
             print("Error during tket2 differential testing:", e)

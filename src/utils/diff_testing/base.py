@@ -9,7 +9,6 @@ import os
 import argparse
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-import traceback
 import pathlib
 import shutil
 

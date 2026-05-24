@@ -248,6 +248,7 @@ def main():
     parser.add_argument("--language", choices=["guppy", "qiskit", "pytket", "pennylane"], default="guppy", help="Language of the files to test")
     parser.add_argument("--workers", type=int, default=2, help="Number of concurrent workers")
     parser.add_argument("--verbose", action="store_true", help="Include wrapped code in the log output")
+    parser.add_argument("--debug", action="store_true", help="Enable diff-testing debug mode and stage timing output")
     parser.add_argument("--output-log", help="Optional path for the execution log file")
     parser.add_argument("--output-dir", type=str, default=None, help="Optional output directory for report/json/csv/plots")
     parser.add_argument("--compile-only", action="store_true", help="Only compile the programs, do not run them.")
@@ -276,6 +277,8 @@ def main():
     else:
         os.environ["QUILLFUZZ_RUN_DIR"] = input_dir
 
+    os.environ["QUILLFUZZ_DEBUG"] = "1" if args.debug else "0"
+
     output_dir = os.path.abspath(args.output_dir) if args.output_dir else input_dir
     os.makedirs(output_dir, exist_ok=True)
 
@@ -299,12 +302,15 @@ def main():
     logger.log(f"Input directory: {input_dir}")
     logger.log(f"Language: {args.language}")
     logger.log(f"Compile only: {args.compile_only}")
+    logger.log(f"Debug: {args.debug}")
     logger.log(f"Workers: {workers}")
     logger.log(f"Files discovered: {len(files)}")
 
     print(f"Found {len(files)} files in {input_dir}")
     print(f"Execution log: {log_path}")
     print(f"Using {workers} workers")
+    if args.debug:
+        print("Debug mode enabled: diff-testing stages will print timing output")
 
     start_time = time.time()
     results: List[FileResult] = []

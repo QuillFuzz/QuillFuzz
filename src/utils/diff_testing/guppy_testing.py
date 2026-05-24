@@ -37,15 +37,10 @@ class guppyTesting(Base):
             "FlattenRegisters": FlattenRegisters,
         }
     
-    def _get_selected_passes(self, random_n: Optional[int]) -> List[Tuple[str, Callable[[], BasePass]]]:
-        
-        curated = self._curated_pass_registry()
-        selected = dict(curated)
-
-        if random_n is not None:
-            selected = dict(random.sample(list(selected.items()), min(random_n, len(selected))))
-
-        return list(selected.items())
+    def _get_selected_passes(self) -> List[Tuple[str, Callable[[], BasePass]]]:
+        selected = list(self._curated_pass_registry().items())
+        random.shuffle(selected)
+        return selected
 
     def ks_diff_test(self, circuit: Any, circuit_number: int, n_qubits: int = 15) -> None:
         hugr = None
@@ -119,45 +114,51 @@ class guppyTesting(Base):
                 try:
                     wrapped_pass = PytketHugrPass(pass_instance)
                     pass_result = wrapped_pass(pass_input)
+                    if pass_result.hugr is None:
+                        raise RuntimeError(f"{pass_name} produced no HUGR result via PytketHugrPass")
+                    return pass_result.hugr
                 except Exception as e:
                     raise RuntimeError(f"Error applying pass {pass_name} : {e}")
-                    
-        # Now run all the curated passes
-        selected_passes = self._get_selected_passes(random_n=None)
+
+        # Apply the full pass set in a single random sequence, then simulate once.
+        selected_passes = self._get_selected_passes()
         if not selected_passes:
             print("No passes selected for guppy ks_diff_test; returning after baseline run.")
             return
-        for pass_name, pass_factory in selected_passes:
-            print(f"Applying pass: {pass_name}")
 
-            try:
-                hugr_opt = apply_pass_with_fallback(pass_name, pass_factory, hugr_base)
+        print(f"Applying pass sequence: {[name for name, _ in selected_passes]}")
+        try:
+            hugr_opt = hugr_base
+            for pass_name, pass_factory in selected_passes:
+                print(f"Applying pass: {pass_name}")
+                hugr_opt = apply_pass_with_fallback(pass_name, pass_factory, hugr_opt)
 
-                runner_opt = build(hugr_opt.to_bytes())
-                results_opt = QsysResult(runner_opt.run_shots(Quest(), n_qubits=n_qubits, n_shots=shots))
-                raw_counts_opt = results_opt.collated_counts()
-                counts_opt = self._counts_from_qsys_raw(raw_counts_opt)
+            runner_opt = build(hugr_opt.to_bytes())
+            results_opt = QsysResult(runner_opt.run_shots(Quest(), n_qubits=n_qubits, n_shots=shots))
+            raw_counts_opt = results_opt.collated_counts()
+            counts_opt = self._counts_from_qsys_raw(raw_counts_opt)
 
-                if not counts_opt:
-                    print(f"Warning: No valid counts after preprocessing for optimized circuit {circuit_number}.")
-                    if counts_base:
-                        print("Interesting discrepancy: Optimized circuit lost all outputs.")
-                        self.save_interesting_circuit(circuit_number)
-                    continue
-
-                ks_value = self.ks_test(counts_base, counts_opt, shots)
-                print(f"Pass {pass_name} ks-test p-value: {ks_value}")
-
-                if ks_value < self.KS_THRESHOLD:
-                    print(f"Interesting circuit found (Low KS): {circuit_number}")
+            if not counts_opt:
+                print(f"Warning: No valid counts after preprocessing for optimized circuit {circuit_number}.")
+                if counts_base:
+                    print("Interesting discrepancy: Optimized circuit lost all outputs.")
                     self.save_interesting_circuit(circuit_number)
+                return
 
-                if self.plot:
-                    self.plot_histogram(counts_base, "Guppy Base Results", 0, circuit_number)
-                    self.plot_histogram(counts_opt, f"Guppy {pass_name} Results", 1, circuit_number)
+            print(f"Raw counts for compiled circuit {circuit_number}: {raw_counts_opt}")
 
-            except Exception as e:
-                print(f"Error executing pass {pass_name} or running result: {e}")
-                traceback.print_exc()
+            ks_value = self.ks_test(counts_base, counts_opt, shots)
+            print(f"Randomized pass sequence ks-test p-value: {ks_value}")
+
+            if ks_value < self.KS_THRESHOLD:
+                print(f"Interesting circuit found (Low KS): {circuit_number}")
                 self.save_interesting_circuit(circuit_number)
-                continue
+
+            if self.plot:
+                self.plot_histogram(counts_base, "Guppy Base Results", 0, circuit_number)
+                self.plot_histogram(counts_opt, "Guppy Optimized Sequence Results", 1, circuit_number)
+
+        except Exception as e:
+            print(f"Error executing randomized pass sequence or running result: {e}")
+            traceback.print_exc()
+            self.save_interesting_circuit(circuit_number)
