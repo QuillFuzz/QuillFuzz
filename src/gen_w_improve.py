@@ -558,14 +558,14 @@ def run_mutation_phase(model, files, args, common_run_dir, logfile_path, logger=
 
     if not files:
         mutation_logger.log("Mutation stage enabled but no successful generated programs were available.")
-        return
+        return [], None, [], []
 
     mutation_prompt_file = "mutate_prompt_template.txt"
     mutation_prompt_path = os.path.join(args.prompt_dir, mutation_prompt_file)
     if not os.path.exists(mutation_prompt_path):
         mutation_logger.log(f"Mutation prompt missing at {mutation_prompt_path}")
         print(f"Error: Mutation prompt file '{mutation_prompt_path}' not found. Skipping mutation phase.")
-        return
+        return [], None, [], []
 
     try:
         with open(mutation_prompt_path, 'r', encoding='utf-8') as f:
