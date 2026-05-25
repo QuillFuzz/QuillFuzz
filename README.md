@@ -53,7 +53,20 @@ podman run -d \
 podman exec -it quillfuzz /bin/bash
 ```
 
-To leave the shell, use `exit` or Ctrl+D. That only closes the shell session; it does not stop the detached container. Reconnect with the same `exec` command at any time.
+To leave the shell, use `exit` or Ctrl+D. That only closes the shell session; it does not stop the detached container.
+
+If you want to keep watching the output of a long-running test or fuzzing run after closing the shell, start tmux explicitly after entering the container and detach with Ctrl+B, then D:
+
+```bash
+tmux new -A -s quillfuzz
+```
+
+Later, reattach with:
+
+```bash
+docker exec -it quillfuzz tmux attach -t quillfuzz
+podman exec -it quillfuzz tmux attach -t quillfuzz
+```
 
 The `docker exec` and `podman exec` examples below apply to the standalone container named `quillfuzz` created by the Docker or Podman commands above. If you start QuillFuzz with Compose, keep using `docker compose exec quillfuzz /bin/bash`.
 

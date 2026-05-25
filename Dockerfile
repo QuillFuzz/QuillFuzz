@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y \
     cmake \
     graphviz \
     gdb \
+    tmux \
     lsb-release \
     wget \
     software-properties-common \
