@@ -9,6 +9,11 @@ on:
 jobs:
   test-runs:
     runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,6 +39,10 @@ jobs:
           docker compose run --rm
           --user "$(id -u):$(id -g)"
           -e PYTHONPATH=/QuillFuzz/src
+          -e OPENAI_API_KEY
+          -e ANTHROPIC_API_KEY
+          -e GEMINI_API_KEY
+          -e DEEPSEEK_API_KEY
           quillfuzz
           python src/gen_w_improve.py
           --config_file run_configs/guppy_test_run_config.yaml
@@ -44,6 +53,10 @@ jobs:
           docker compose run --rm
           --user "$(id -u):$(id -g)"
           -e PYTHONPATH=/QuillFuzz/src
+          -e OPENAI_API_KEY
+          -e ANTHROPIC_API_KEY
+          -e GEMINI_API_KEY
+          -e DEEPSEEK_API_KEY
           quillfuzz
           python src/gen_w_improve.py
           --config_file run_configs/pytket_test_run_config.yaml
@@ -54,6 +67,10 @@ jobs:
           docker compose run --rm
           --user "$(id -u):$(id -g)"
           -e PYTHONPATH=/QuillFuzz/src
+          -e OPENAI_API_KEY
+          -e ANTHROPIC_API_KEY
+          -e GEMINI_API_KEY
+          -e DEEPSEEK_API_KEY
           quillfuzz
           python src/gen_w_improve.py
           --config_file run_configs/qiskit_test_run_config.yaml
