@@ -506,7 +506,7 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
                     successful_files.append(os.path.abspath(save_path))
 
                 metrics_rows.append(build_metrics_row(
-                    model, file_name, success, execution_metrics, compilation_metrics
+                    model, file_name, success, execution_metrics, compilation_metrics, getattr(stats, 'cost', 0.0)
                 ))
             except Exception as e:
                 logger.log(f"Error: {e}")
@@ -521,7 +521,7 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
                     "error": error_details["error"],
                     "error_full": error_details["error_full"],
                 })
-                metrics_rows.append(build_metrics_row(model, source_filename, False, {}, {}))
+                metrics_rows.append(build_metrics_row(model, source_filename, False, {}, {}, 0.0))
 
     metrics_csv_path = os.path.join(os.path.dirname(logfile_path), "execution_metrics.csv")
     append_rows_to_csv(metrics_csv_path, metrics_rows)
@@ -644,7 +644,7 @@ def run_mutation_phase(model, files, args, common_run_dir, logfile_path, logger=
                     successful_pool.add(abs_path)
 
                 metrics_rows.append(build_metrics_row(
-                    model, file_name, success, execution_metrics, compilation_metrics
+                    model, file_name, success, execution_metrics, compilation_metrics, getattr(stats, 'cost', 0.0)
                 ))
             except Exception as e:
                 mutation_logger.log(f"Error: {e}")
@@ -659,7 +659,7 @@ def run_mutation_phase(model, files, args, common_run_dir, logfile_path, logger=
                     "error": error_details["error"],
                     "error_full": error_details["error_full"],
                 })
-                metrics_rows.append(build_metrics_row(model, source_filename, False, {}, {}))
+                metrics_rows.append(build_metrics_row(model, source_filename, False, {}, {}, 0.0))
 
     metrics_csv_path = os.path.join(os.path.dirname(logfile_path), "mutation_execution_metrics.csv")
     append_rows_to_csv(metrics_csv_path, metrics_rows)
@@ -750,7 +750,7 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
             success = not bool(runtime_error_full)
 
             metrics_rows.append(build_metrics_row(
-                model, file_name, success, execution_metrics, compilation_metrics
+                model, file_name, success, execution_metrics, compilation_metrics, 0.0
             ))
 
             # Also collect structured metrics for plotting

@@ -8,16 +8,23 @@ from typing import Any, Dict, List, Optional, Tuple
 
 KS_TEST_PATTERN = re.compile(r"Optimisation level\s+(\d+)\s+ks-test p-value:\s*([0-9eE+\-.]+)")
 
-def build_metrics_row(model: str, file_name: str, success: bool, execution_metrics: Dict[str, Any], compilation_metrics: Dict[str, Any]) -> Dict[str, Any]:
-    """Build a single metrics row for CSV export."""
-    return {
+
+def _has_compilation_error(compilation_metrics: Dict[str, Any]) -> bool:
+    return bool((compilation_metrics or {}).get("error_summary") or (compilation_metrics or {}).get("error_full"))
+
+def build_metrics_row(model: str, file_name: str, success: bool, execution_metrics: Dict[str, Any], compilation_metrics: Dict[str, Any], cost: float = 0.0) -> Dict[str, Any]:
+    """Build a single metrics row for CSV export. Includes optional `cost` field."""
+    row = {
         "model": model,
         "file": file_name,
         "success": success,
         "coverage_percent": execution_metrics.get("coverage_percent", 0.0) if execution_metrics else 0.0,
-        **flatten_metrics_for_csv("compilation", compilation_metrics or {}),
-        **flatten_metrics_for_csv("execution", execution_metrics or {}),
+        "cost": cost,
     }
+    # Merge flattened metrics (compilation then execution) while keeping cost at top-level
+    row.update(flatten_metrics_for_csv("compilation", compilation_metrics or {}))
+    row.update(flatten_metrics_for_csv("execution", execution_metrics or {}))
+    return row
 
 
 def build_phase_summary(
@@ -31,7 +38,12 @@ def build_phase_summary(
 ) -> Tuple[str, Dict[str, Any]]:
     """Build the formatted summary log and summary dict for a run phase."""
     total_cost = sum(getattr(stats, "cost", 0.0) for stats in stats_list)
-    quality_scores = [stats.quality_score for stats in stats_list if getattr(stats, "quality_score", None) is not None]
+    quality_scores = [
+        stats.quality_score
+        for stats in stats_list
+        if getattr(stats, "quality_score", None) is not None
+        and not _has_compilation_error(getattr(stats, "metrics", {}).get("compilation", {}))
+    ]
     avg_quality = sum(quality_scores) / len(quality_scores) if quality_scores else 0.0
 
     total_prompt_tokens = sum(getattr(stats, "prompt_tokens", 0) for stats in stats_list)
