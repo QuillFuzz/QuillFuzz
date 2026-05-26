@@ -195,6 +195,7 @@ def process_single_file(
         language=language,
         source_file_path=file_path,
         circuit_id=file_index,
+        ks_low_threshold=ks_low_threshold,
     )
     execution_metrics = execution_metrics or {}
 

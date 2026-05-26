@@ -40,12 +40,19 @@ def _project_root() -> str:
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-def _build_execution_env(coverage_file: str, source_file_path: Optional[str] = None) -> Dict[str, str]:
+def _build_execution_env(
+    coverage_file: str,
+    source_file_path: Optional[str] = None,
+    ks_low_threshold: Optional[float] = None,
+) -> Dict[str, str]:
     env = os.environ.copy()
     env["COVERAGE_FILE"] = coverage_file
 
     if source_file_path:
         env["QUILLFUZZ_SOURCE_FILE"] = os.path.abspath(source_file_path)
+
+    if ks_low_threshold is not None:
+        env["QUILLFUZZ_KS_LOW_THRESHOLD"] = str(ks_low_threshold)
 
     project_root = _project_root()
     current_pythonpath = env.get("PYTHONPATH", "")
@@ -188,6 +195,7 @@ def _execute_python_code(
     language: str = "guppy",
     coverage_source: str = None,
     source_file_path: str = None,
+    ks_low_threshold: Optional[float] = None,
 ):
     """
     Internal helper to execute prepared Python code with coverage and metrics tracking.
@@ -213,7 +221,7 @@ def _execute_python_code(
         try:
             start_time = time.time()
             
-            env = _build_execution_env(coverage_file, source_file_path)
+            env = _build_execution_env(coverage_file, source_file_path, ks_low_threshold)
             
             # Execute
             cmd = [
@@ -297,7 +305,15 @@ def compile_generated_program(program_code: str, timeout: int = DEFAULT_COMPILE_
     error, stdout, metrics = _execute_python_code(wrapped_code, timeout, language, coverage_source, source_file_path)
     return error, stdout, metrics, wrapped_code
 
-def run_generated_program(program_code: str, timeout: int = DEFAULT_EXECUTION_TIMEOUT, language: str = 'guppy', coverage_source: str = None, source_file_path: str = None, circuit_id: int = 0):
+def run_generated_program(
+    program_code: str,
+    timeout: int = DEFAULT_EXECUTION_TIMEOUT,
+    language: str = 'guppy',
+    coverage_source: str = None,
+    source_file_path: str = None,
+    circuit_id: int = 0,
+    ks_low_threshold: Optional[float] = None,
+):
     """
     Execute generated Python program with full test harness (KS diff test).
     
@@ -308,7 +324,14 @@ def run_generated_program(program_code: str, timeout: int = DEFAULT_EXECUTION_TI
     wrapped_code = _wrap_code_for_testing(clean_code, language, circuit_id)
     
     # Here, the wall_time metric will reflect full execution time, including execution and compilation.
-    error, stdout, metrics = _execute_python_code(wrapped_code, timeout, language, coverage_source, source_file_path)
+    error, stdout, metrics = _execute_python_code(
+        wrapped_code,
+        timeout,
+        language,
+        coverage_source,
+        source_file_path,
+        ks_low_threshold,
+    )
     return error, stdout, metrics, wrapped_code
 
 

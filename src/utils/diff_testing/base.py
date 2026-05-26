@@ -25,6 +25,12 @@ class Base():
         self.args = self.parser.parse_args()
         self.plot: bool = self.args.plot
         self.run_output_dir: pathlib.Path = self._resolve_run_output_dir()
+        ks_threshold_env = os.getenv("QUILLFUZZ_KS_LOW_THRESHOLD")
+        if ks_threshold_env:
+            try:
+                self.KS_THRESHOLD = float(ks_threshold_env)
+            except ValueError:
+                pass
         # Debug mode - when enabled (via QUILLFUZZ_DEBUG env var) reduce shot counts for faster testing
         debug_env = os.getenv("QUILLFUZZ_DEBUG", "0")
         self.debug = str(debug_env).lower() in ("1", "true", "yes", "y", "on")

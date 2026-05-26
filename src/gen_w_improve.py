@@ -142,6 +142,7 @@ class ProgramProcessor:
             language=self.config.language,
             source_file_path=source_file_path,
             circuit_id=self.index + 1,
+            ks_low_threshold=self.config.ks_low_threshold,
         )
         metrics = metrics or {}
         self.stats.metrics['execution'] = metrics
@@ -728,7 +729,11 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
 
             # Run the assembled program to collect metrics and KS output.
             error, output, metrics, runtime_code = run_generated_program(
-                assembled_code, language=args.language, source_file_path=out_path, circuit_id=count
+                assembled_code,
+                language=args.language,
+                source_file_path=out_path,
+                circuit_id=count,
+                ks_low_threshold=args.ks_low_threshold,
             )
             logger.log(f"Execution completed for {os.path.basename(out_path)}. Processing results...")
 

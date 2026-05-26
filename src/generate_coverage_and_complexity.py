@@ -56,6 +56,7 @@ def process_single_file(
     logger: Logger,
     verbose: bool,
     file_index: int,
+    ks_low_threshold: float,
 ) -> FileResult:
     filename = os.path.basename(file_path)
 
@@ -112,6 +113,7 @@ def process_single_file(
         language=language,
         source_file_path=file_path,
         circuit_id=file_index,
+        ks_low_threshold=ks_low_threshold,
     )
     metrics["execution"] = execution_metrics or {}
 
@@ -489,6 +491,12 @@ def main():
         action="store_true",
         help="When --input-type csv, enable recompiling source files to backfill missing compilation metrics (can be slow).",
     )
+    parser.add_argument(
+        "--ks_low_threshold",
+        type=float,
+        default=0.0001,
+        help="Threshold below which KS-test p-values are flagged as low in report/log outputs.",
+    )
     args = parser.parse_args()
 
     input_path = os.path.abspath(args.input_path)
@@ -578,6 +586,7 @@ def main():
                 logger,
                 args.verbose,
                 index,
+                args.ks_low_threshold,
             ): file_path
             for index, file_path in enumerate(files)
         }
