@@ -481,7 +481,7 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
 
     if logger is None:
         logger = Logger(logfile_path)
-    start_time = time.time()
+    
     gen_dir = os.path.join(common_run_dir, "generated")
     fail_dir = os.path.join(common_run_dir, "failed_programs")
     os.makedirs(gen_dir, exist_ok=True)
@@ -504,6 +504,7 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
     except Exception as e:
         logger.log(f"Could not read prompt file for verbose logging: {e}")
 
+    start_time = time.time()
     stats_list = []
     metrics_rows = []
     report_entries = []
@@ -632,32 +633,30 @@ def run_production_phase(model, prompt_filename, args, common_run_dir, logfile_p
 
 def run_mutation_phase(model, files, args, common_run_dir, logfile_path, logger=None):
     """Runs mutation phase for given model and valid pool of source files to mutate"""
+    
+    if logger is None:
+        logger = Logger(logfile_path)
+    
     mutation_generated_dir = os.path.join(common_run_dir, "generated")
     mutation_failed_dir = os.path.join(common_run_dir, "failed_programs")
     os.makedirs(mutation_generated_dir, exist_ok=True)
     os.makedirs(mutation_failed_dir, exist_ok=True)
 
-    if logger is None:
-        logger = Logger(logfile_path)
-    mutation_logger = logger
-
     if not files:
-        mutation_logger.log("Mutation stage enabled but no successful generated programs were available.")
+        logger.log("Mutation stage enabled but no successful generated programs were available.")
         return [], None, [], []
 
     mutation_prompt_file = "mutate_prompt_template.txt"
     mutation_prompt_path = os.path.join(args.prompt_dir, mutation_prompt_file)
-    if not os.path.exists(mutation_prompt_path):
-        mutation_logger.log(f"Mutation prompt missing at {mutation_prompt_path}")
-        print(f"Error: Mutation prompt file '{mutation_prompt_path}' not found. Skipping mutation phase.")
-        return [], None, [], []
 
     try:
         with open(mutation_prompt_path, 'r', encoding='utf-8') as f:
             prompt_content = f.read()
-        mutation_logger.log(f"\n--- Mutation Prompt Content ---\n{prompt_content}\n-------------------------------\n")
+        logger.log(f"\n--- Mutation Prompt Content ---\n{prompt_content}\n-------------------------------\n")
     except Exception as e:
-        mutation_logger.log(f"Could not read mutation prompt file: {e}")
+        logger.log(f"Could not read mutation prompt file: {e}")
+        print(f"Error: Mutation prompt file '{mutation_prompt_path}' not found. Skipping mutation phase.")
+        return [], None, [], []
 
     mutation_count = args.n_mutations if args.n_mutations > 0 else len(files)
     start_time = time.time()
@@ -681,7 +680,7 @@ def run_mutation_phase(model, files, args, common_run_dir, logfile_path, logger=
                     with open(seed_file, 'r', encoding='utf-8') as seed_handle:
                         seed_code = seed_handle.read()
                 except Exception as error:
-                    mutation_logger.log(f"Failed to read mutation seed {seed_file}: {error}")
+                    logger.log(f"Failed to read mutation seed {seed_file}: {error}")
                     submitted += 1
                     pbar.update(1)
                     completed += 1
@@ -691,7 +690,7 @@ def run_mutation_phase(model, files, args, common_run_dir, logfile_path, logger=
                     submitted,
                     model,
                     args,
-                    mutation_logger,
+                    logger,
                     time.time(),
                     stage="mutation",
                     stop_controller=getattr(args, "stop_controller", None),
@@ -767,7 +766,7 @@ def run_mutation_phase(model, files, args, common_run_dir, logfile_path, logger=
                         model, file_name, success, execution_metrics, compilation_metrics, getattr(stats, 'cost', 0.0)
                     ))
                 except Exception as e:
-                    mutation_logger.log(f"Error: {e}")
+                    logger.log(f"Error: {e}")
                     error_details = build_error_details([{"error": str(e), "error_full": str(e)}])
 
                     report_entries.append({
@@ -783,14 +782,14 @@ def run_mutation_phase(model, files, args, common_run_dir, logfile_path, logger=
         pbar.close()
 
     if getattr(args, "stop_controller", None) and args.stop_controller.stop_requested:
-        mutation_logger.log(
+        logger.log(
             f"Mutation phase stopped early at {len(report_entries)}/{mutation_count} completed candidates due to interactive stop request."
         )
 
     metrics_csv_path = os.path.join(os.path.dirname(logfile_path), "mutation_execution_metrics.csv")
     append_rows_to_csv(metrics_csv_path, metrics_rows)
     if metrics_rows:
-        mutation_logger.log(f"Saved {len(metrics_rows)} mutation run metrics rows to {metrics_csv_path}")
+        logger.log(f"Saved {len(metrics_rows)} mutation run metrics rows to {metrics_csv_path}")
 
     total_time = time.time() - start_time
     summary_log, summary = build_phase_summary(
@@ -802,7 +801,7 @@ def run_mutation_phase(model, files, args, common_run_dir, logfile_path, logger=
         report_entries,
         args.ks_low_threshold,
     )
-    mutation_logger.log(summary_log)
+    logger.log(summary_log)
     metrics = [{'model': model, 'metrics': s.metrics} for s in stats_list if s.metrics]
 
     return sorted(successful_pool), summary, metrics, report_entries

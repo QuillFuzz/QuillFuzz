@@ -15,7 +15,6 @@ from utils.utils import generate_complexity_scatter_plots, generate_summary_plot
 
 
 SUPPORTED_LANGUAGES = ("guppy", "qiskit", "pytket", "pennylane")
-DEFAULT_LANGUAGE = "guppy"
 
 
 def main():
@@ -25,7 +24,7 @@ def main():
     parser = argparse.ArgumentParser(description="LLM Circuit Generator")
     parser.add_argument("--config_file", type=str, help="Relative path to the configuration file.")
     parser.add_argument("--run_name", type=str, help="Name for the current run. Defaults to a timestamp.")
-    parser.add_argument("--language", type=str, choices=SUPPORTED_LANGUAGES, default=DEFAULT_LANGUAGE, help="Language for the generated code.")
+    parser.add_argument("--language", type=str, choices=SUPPORTED_LANGUAGES, help="Language for the generated code.")
     parser.add_argument("--output_dir", type=str, help="Directory for the current run. Defaults to a timestamped folder inside 'local_saved_circuits'.")
     parser.add_argument("--prompt_dir", type=str, help="Directory containing prompt templates. Defaults to 'prompts/<language>' within the project.")
     parser.add_argument("--models", nargs='+', help="List of models to evaluate (e.g. --models openai/gpt-5.5 anthropic/claude-sonnet-4-5)")
@@ -59,7 +58,10 @@ def main():
             parser.set_defaults(**(yaml.safe_load(f) or {}))
 
     args = parser.parse_args()
-    args.language = (args.language or DEFAULT_LANGUAGE).lower()
+    
+    args.language = args.language if args.language else None
+    if args.language:
+        args.language = args.language.lower()
     if args.language not in SUPPORTED_LANGUAGES:
         parser.error(f"Unsupported language '{args.language}'. Expected one of: {', '.join(SUPPORTED_LANGUAGES)}")
 
