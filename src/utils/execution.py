@@ -18,6 +18,7 @@ from .ast_ops import (
     wrap_for_testing_pennylane,
     get_code_complexity_metrics,
 )
+from .reporting import summarize_error_text
 
 # Default timeouts in seconds
 DEFAULT_EXECUTION_TIMEOUT = 300
@@ -72,17 +73,6 @@ def _safe_remove(path: Optional[str]) -> None:
         pass
 
 
-def _summarize_error_text(error_text: str, fallback: str) -> str:
-    if not error_text:
-        return fallback
-
-    lines = [line.strip() for line in error_text.splitlines() if line and line.strip()]
-    if not lines:
-        return fallback
-
-    return lines[-1]
-
-
 def _extract_run_error(result: subprocess.CompletedProcess) -> Tuple[str, str]:
     stderr = result.stderr or ""
     full_error = stderr.strip()
@@ -91,10 +81,10 @@ def _extract_run_error(result: subprocess.CompletedProcess) -> Tuple[str, str]:
         fallback = f"Process exited with code {result.returncode}"
         if not full_error:
             full_error = fallback
-        return _summarize_error_text(full_error, fallback), full_error
+        return summarize_error_text(full_error, fallback), full_error
 
     if full_error:
-        return _summarize_error_text(full_error, ""), full_error
+        return summarize_error_text(full_error, ""), full_error
 
     return "", ""
 
@@ -287,7 +277,7 @@ def _execute_python_code(
         return timeout_error, "", {"wall_time": float(timeout), "note": "timed_out", "error_full": timeout_error, "error_summary": timeout_error}
     except Exception as e:
         full_error = f"ERROR: Failed to execute program: {str(e)}"
-        summary = _summarize_error_text(full_error, "Execution failed")
+        summary = summarize_error_text(full_error, "Execution failed")
         return summary, "", {"error_full": full_error, "error_summary": summary}
 
 def compile_generated_program(program_code: str, timeout: int = DEFAULT_COMPILE_TIMEOUT, language: str = 'guppy', coverage_source: str = None, source_file_path: str = None):
@@ -418,7 +408,7 @@ def run_coverage_on_file(file_path: str, source_package: str = None, verbose: bo
                     run_error_full = f"{run_error_full}\nCoverage report output error: {str(e)}".strip()
 
         if run_error and run_error_full:
-            return coverage_percent, _summarize_error_text(run_error, "Coverage execution failed"), coverage_data, verbose_report
+            return coverage_percent, summarize_error_text(run_error, "Coverage execution failed"), coverage_data, verbose_report
 
         return coverage_percent, run_error, coverage_data, verbose_report
 

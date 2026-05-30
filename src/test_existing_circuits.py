@@ -4,244 +4,27 @@ import json
 import time
 import argparse
 import concurrent.futures
-from dataclasses import dataclass
-from typing import Dict, Any, List, Tuple
+from typing import List
 
 from tqdm import tqdm
 
 # Add project root to path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+for path in (SCRIPT_DIR, PROJECT_ROOT):
+    if path not in sys.path:
+        sys.path.append(path)
 
 # Import from local library
-from utils.execution import run_generated_program, compile_generated_program
-from utils.utils import generate_complexity_scatter_plots
-from utils.reporting import (
-    Logger,
-    StreamingMetricsCsvWriter,
-    flatten_metrics_for_csv,
-    ensure_clean_file,
-    build_error_details,
-    format_low_ks_values,
-    populate_ks_test_metrics,
+from utils.execution_pipeline import (
+    FileResult,
+    build_metrics_csv_row,
+    build_summary,
+    list_python_files,
+    process_single_file,
 )
-
-
-@dataclass
-class FileResult:
-    file_path: str
-    success: bool
-    error: str
-    metrics: Dict[str, Any]
-    low_ks_test_levels: List[Tuple[str, float]]
-
-
-def _validate_workers(workers: int) -> int:
-    return max(1, workers)
-
-
-def _list_python_files(input_dir: str) -> List[str]:
-    return sorted([
-        os.path.join(input_dir, f)
-        for f in os.listdir(input_dir)
-        if f.endswith(".py") and os.path.isfile(os.path.join(input_dir, f))
-    ])
-
-
-def _coverage_from_metrics(metrics: Dict[str, Any], compile_only: bool) -> float:
-    if compile_only:
-        compilation_metrics = metrics.get("compilation", {})
-        if compilation_metrics:
-            return float(compilation_metrics.get("coverage_percent", 0.0) or 0.0)
-        return float(metrics.get("coverage_percent", 0.0) or 0.0)
-
-    execution_metrics = metrics.get("execution", {})
-    if execution_metrics:
-        return float(execution_metrics.get("coverage_percent", 0.0) or 0.0)
-
-    return float(metrics.get("coverage_percent", 0.0) or 0.0)
-
-
-def _build_metrics_csv_row(model_name: str, result: FileResult, compile_only: bool) -> Dict[str, Any]:
-    metrics_root = result.metrics or {}
-    execution_metrics = metrics_root.get("execution", {})
-    compilation_metrics = metrics_root.get("compilation", {})
-
-    if compile_only:
-        execution_metrics = {}
-
-    return {
-        "model": model_name,
-        "file": os.path.basename(result.file_path),
-        "success": result.success,
-        "coverage_percent": _coverage_from_metrics(metrics_root, compile_only),
-        **flatten_metrics_for_csv("execution", execution_metrics),
-        **flatten_metrics_for_csv("compilation", compilation_metrics),
-    }
-
-
-def _build_summary(model_name: str, results: List[FileResult], compile_only: bool, duration: float, ks_low_threshold: float) -> Dict[str, Any]:
-    total = len(results)
-    successful = sum(1 for result in results if result.success)
-    failed = total - successful
-
-    successful_coverages = [_coverage_from_metrics(result.metrics, compile_only) for result in results if result.success]
-    avg_coverage = sum(successful_coverages) / len(successful_coverages) if successful_coverages else 0.0
-
-    def _error_payload(result: FileResult) -> Dict[str, str]:
-        metrics_root = result.metrics or {}
-        execution_metrics = metrics_root.get("execution", {})
-        compilation_metrics = metrics_root.get("compilation", {})
-        return build_error_details([
-            {
-                "error": execution_metrics.get("error_summary")
-                or compilation_metrics.get("error_summary")
-                or result.error,
-                "error_full": execution_metrics.get("error_full")
-                or compilation_metrics.get("error_full")
-                or result.error,
-            }
-        ])
-
-    return {
-        "model": model_name,
-        "total_files": total,
-        "successful_files": successful,
-        "failed_files": failed,
-        "pass_rate": (successful / total * 100.0) if total else 0.0,
-        "average_coverage_percent": avg_coverage,
-        "files_with_low_ks": sum(1 for result in results if result.low_ks_test_levels),
-        "ks_low_threshold": ks_low_threshold,
-        "compile_only": compile_only,
-        "duration_seconds": duration,
-        "avg_time_per_file_seconds": (duration / total) if total else 0.0,
-        "per_file_reports": [
-            {
-                "file": os.path.basename(result.file_path),
-                "success": result.success,
-                "coverage_percent": _coverage_from_metrics(result.metrics, compile_only),
-                "error": _error_payload(result)["error"],
-                "error_full": _error_payload(result)["error_full"],
-                "low_ks_test_levels": result.low_ks_test_levels,
-            }
-            for result in results
-        ],
-    }
-
-
-def process_single_file(
-    file_path: str,
-    logger: Logger,
-    verbose: bool,
-    language: str,
-    compile_only: bool,
-    ks_low_threshold: float,
-    file_index: int,
-) -> FileResult:
-    filename = os.path.basename(file_path)
-    log_lines: List[str] = []
-
-    def log_line(message: str):
-        log_lines.append(message)
-
-    def flush_log():
-        if log_lines:
-            logger.log("\n".join(log_lines))
-            log_lines.clear()
-
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            code = f.read()
-    except Exception as exc:
-        err = f"Error reading {filename}: {exc}"
-        log_line(err)
-        flush_log()
-        return FileResult(file_path=file_path, success=False, error=err, metrics={}, low_ks_test_levels=[])
-
-    compile_error, compile_stdout, compilation_metrics, compilation_wrapped_code = compile_generated_program(
-        code,
-        language=language,
-        source_file_path=file_path,
-    )
-
-    metrics: Dict[str, Any] = {
-        "compilation": compilation_metrics or {},
-        "execution": {},
-    }
-
-    log_line(f"--- Processing {filename} ---")
-    log_line(f"Metrics: {metrics}")
-
-    has_compile_error = bool(compile_error and compile_error.strip())
-
-    if compile_stdout and not has_compile_error:
-        log_line(f"Compile Output:\n{compile_stdout}")
-
-    if verbose:
-        log_line(f"Compilation Wrapped Code:\n{compilation_wrapped_code}")
-
-    if has_compile_error:
-        full_compile_error = (compilation_metrics or {}).get("error_full") or compile_error
-        log_line(f"Compilation Error:\n{full_compile_error}")
-        flush_log()
-        return FileResult(file_path=file_path, success=False, error=compile_error, metrics=metrics, low_ks_test_levels=[])
-
-    if compile_only:
-        log_line("Status: success")
-        flush_log()
-        return FileResult(file_path=file_path, success=True, error="", metrics=metrics, low_ks_test_levels=[])
-
-    run_error, run_stdout, execution_metrics, runtime_wrapped_code = run_generated_program(
-        code,
-        language=language,
-        source_file_path=file_path,
-        circuit_id=file_index,
-        ks_low_threshold=ks_low_threshold,
-    )
-    execution_metrics = execution_metrics or {}
-
-    low_ks_test_levels = populate_ks_test_metrics(execution_metrics, run_stdout, ks_low_threshold)
-    if low_ks_test_levels:
-        low_text = format_low_ks_values(low_ks_test_levels)
-        log_line(f"LOW KS detected for {filename} (threshold={ks_low_threshold}): {low_text}")
-
-    metrics["execution"] = execution_metrics
-
-    log_line(f"Metrics: {metrics}")
-
-    has_run_error = bool(run_error and run_error.strip())
-
-    if run_stdout and not has_run_error:
-        log_line(f"Run Output:\n{run_stdout}")
-
-    if verbose:
-        log_line(f"Runtime Wrapped Code:\n{runtime_wrapped_code}")
-
-    if has_run_error:
-        # Log test harness stdout if verbose
-        if verbose:
-            log_line(f"Test Harness Output:\n{run_stdout}\n")
-
-        full_run_error = execution_metrics.get("error_full") or run_error
-        log_line(f"Runtime Error:\n{full_run_error}")
-        flush_log()
-        return FileResult(
-            file_path=file_path,
-            success=False,
-            error=run_error,
-            metrics=metrics,
-            low_ks_test_levels=low_ks_test_levels,
-        )
-
-    log_line("Status: success")
-    flush_log()
-    return FileResult(
-        file_path=file_path,
-        success=True,
-        error="",
-        metrics=metrics,
-        low_ks_test_levels=low_ks_test_levels,
-    )
-
+from utils.utils import generate_complexity_scatter_plots
+from utils.reporting import Logger, StreamingMetricsCsvWriter, ensure_clean_file
 
 def main():
     parser = argparse.ArgumentParser(description="Run tests on existing generated circuits without generating new ones.")
@@ -266,8 +49,8 @@ def main():
         print(f"Error: {input_dir} is not a directory.")
         sys.exit(1)
 
-    workers = _validate_workers(args.workers)
-    files = _list_python_files(input_dir)
+    workers = max(1, args.workers)
+    files = list_python_files(input_dir)
 
     if not files:
         print(f"No .py files found in {input_dir}")
@@ -335,7 +118,7 @@ def main():
             try:
                 result = future.result()
                 results.append(result)
-                metrics_csv_writer.append_row(_build_metrics_csv_row(model_name, result, args.compile_only))
+                metrics_csv_writer.append_row(build_metrics_csv_row(model_name, result, args.compile_only))
             except Exception as exc:
                 failed_path = futures[future]
                 logger.log(f"Unexpected error for {failed_path}: {exc}")
@@ -347,11 +130,11 @@ def main():
                     low_ks_test_levels=[],
                 )
                 results.append(failed_result)
-                metrics_csv_writer.append_row(_build_metrics_csv_row(model_name, failed_result, args.compile_only))
+                metrics_csv_writer.append_row(build_metrics_csv_row(model_name, failed_result, args.compile_only))
 
     duration = time.time() - start_time
 
-    summary = _build_summary(model_name, results, args.compile_only, duration, args.ks_low_threshold)
+    summary = build_summary(model_name, results, args.compile_only, duration, args.ks_low_threshold)
     with open(summary_json_path, "w", encoding="utf-8") as summary_file:
         json.dump(summary, summary_file, indent=2)
 

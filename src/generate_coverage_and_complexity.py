@@ -19,8 +19,15 @@ for path in (SCRIPT_DIR, PROJECT_ROOT):
         sys.path.append(path)
 
 from utils.execution import run_generated_program, compile_generated_program
+from utils.execution_pipeline import list_python_files
 from utils.utils import generate_complexity_scatter_plots
-from utils.reporting import Logger, StreamingMetricsCsvWriter, ensure_clean_file, build_error_details
+from utils.reporting import (
+    Logger,
+    StreamingMetricsCsvWriter,
+    build_file_result_metrics_row,
+    build_file_result_summary,
+    ensure_clean_file,
+)
 
 
 @dataclass
@@ -29,24 +36,6 @@ class FileResult:
     success: bool
     error: str
     metrics: Dict[str, Any]
-
-
-def _list_python_files(input_dir: str, recursive: bool) -> List[str]:
-    if recursive:
-        files = []
-        for root, _, filenames in os.walk(input_dir):
-            for filename in filenames:
-                if filename.endswith(".py"):
-                    files.append(os.path.join(root, filename))
-        return sorted(files)
-
-    return sorted(
-        [
-            os.path.join(input_dir, f)
-            for f in os.listdir(input_dir)
-            if f.endswith(".py") and os.path.isfile(os.path.join(input_dir, f))
-        ]
-    )
 
 
 def process_single_file(
@@ -135,67 +124,6 @@ def process_single_file(
 
     logger.log("Status: success")
     return FileResult(file_path=file_path, success=True, error="", metrics=metrics or {})
-
-
-def _coverage_from_metrics(metrics: Dict[str, Any], compile_only: bool) -> float:
-    if compile_only:
-        compilation_metrics = metrics.get("compilation", {})
-        if compilation_metrics:
-            return float(compilation_metrics.get("coverage_percent", 0.0))
-        return float(metrics.get("coverage_percent", 0.0))
-
-    execution_metrics = metrics.get("execution", {})
-    if execution_metrics:
-        return float(execution_metrics.get("coverage_percent", 0.0))
-
-    return float(metrics.get("coverage_percent", 0.0))
-
-
-def _build_summary(model_name: str, results: List[FileResult], compile_only: bool) -> Dict[str, Any]:
-    total = len(results)
-    successes = sum(1 for r in results if r.success)
-
-    coverages = []
-    for result in results:
-        if result.success:
-            coverages.append(_coverage_from_metrics(result.metrics, compile_only))
-
-    avg_coverage = sum(coverages) / len(coverages) if coverages else 0.0
-
-    def _error_payload(result: FileResult) -> Dict[str, str]:
-        metrics_root = result.metrics or {}
-        execution_metrics = metrics_root.get("execution", {})
-        compilation_metrics = metrics_root.get("compilation", {})
-        error_details = build_error_details([
-            {
-                "error": execution_metrics.get("error_summary")
-                or compilation_metrics.get("error_summary")
-                or result.error,
-                "error_full": execution_metrics.get("error_full")
-                or compilation_metrics.get("error_full")
-                or result.error,
-            }
-        ])
-        return error_details
-
-    return {
-        "model": model_name,
-        "total_files": total,
-        "successful_files": successes,
-        "failed_files": total - successes,
-        "pass_rate": (successes / total * 100.0) if total else 0.0,
-        "average_coverage_percent": avg_coverage,
-        "per_file_reports": [
-            {
-                "file": os.path.basename(result.file_path),
-                "success": result.success,
-                "coverage_percent": _coverage_from_metrics(result.metrics, compile_only),
-                "error": _error_payload(result)["error"],
-                "error_full": _error_payload(result)["error_full"],
-            }
-            for result in results
-        ],
-    }
 
 
 def _find_default_group_name(input_dir: str) -> str:
@@ -412,45 +340,6 @@ def _build_temp_pruned_csv_for_plotting(
     return temp_path, enriched_count
 
 
-def _flatten_metrics_for_csv(prefix: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
-    flattened: Dict[str, Any] = {}
-    for key, value in (metrics or {}).items():
-        if key in {"error", "error_full", "error_summary", "coverage_error"}:
-            continue
-        col = f"{prefix}_{key}"
-        if isinstance(value, (dict, list)):
-            flattened[col] = json.dumps(value, ensure_ascii=False)
-        else:
-            flattened[col] = value
-    return flattened
-
-
-def _build_metrics_csv_row(
-    model_name: str,
-    result: FileResult,
-    compile_only: bool,
-) -> Dict[str, Any]:
-    metrics_root = result.metrics or {}
-    if compile_only:
-        compilation_metrics = metrics_root.get("compilation", metrics_root)
-        execution_metrics = metrics_root.get("execution", {})
-    else:
-        execution_metrics = metrics_root.get("execution", {})
-        compilation_metrics = metrics_root.get("compilation", {})
-
-        if not execution_metrics and "compilation" not in metrics_root:
-            execution_metrics = metrics_root
-
-    return {
-        "model": model_name,
-        "file": os.path.basename(result.file_path),
-        "success": result.success,
-        "coverage_percent": _coverage_from_metrics(metrics_root, compile_only),
-        **_flatten_metrics_for_csv("execution", execution_metrics),
-        **_flatten_metrics_for_csv("compilation", compilation_metrics),
-    }
-
-
 def main():
     parser = argparse.ArgumentParser(
         description=(
@@ -545,7 +434,7 @@ def main():
         sys.exit(1)
 
     workers = _validate_workers(args.workers)
-    files = _list_python_files(input_dir, args.recursive)
+    files = list_python_files(input_dir, args.recursive)
 
     if not files:
         print(f"No .py files found in {input_dir}")
@@ -595,13 +484,13 @@ def main():
             try:
                 result = future.result()
                 results.append(result)
-                metrics_csv_writer.append_row(_build_metrics_csv_row(model_name, result, args.compile_only))
+                metrics_csv_writer.append_row(build_file_result_metrics_row(model_name, result, args.compile_only))
             except Exception as exc:
                 file_path = futures[future]
                 logger.log(f"Unexpected error for {file_path}: {exc}")
                 failed_result = FileResult(file_path=file_path, success=False, error=str(exc), metrics={})
                 results.append(failed_result)
-                metrics_csv_writer.append_row(_build_metrics_csv_row(model_name, failed_result, args.compile_only))
+                metrics_csv_writer.append_row(build_file_result_metrics_row(model_name, failed_result, args.compile_only))
 
     complexity_metrics = [
         {"model": model_name, "metrics": result.metrics}
@@ -611,7 +500,12 @@ def main():
     if complexity_metrics:
         generate_complexity_scatter_plots(complexity_metrics, complexity_plots_dir)
 
-    summary = _build_summary(model_name, results, args.compile_only)
+    summary = build_file_result_summary(
+        model_name,
+        results,
+        args.compile_only,
+        include_runtime_fields=False,
+    )
     with open(summary_json_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 

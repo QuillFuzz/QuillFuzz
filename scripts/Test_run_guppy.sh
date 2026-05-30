@@ -4,10 +4,10 @@ export PYTHONPATH=$(pwd)/src:$PYTHONPATH
 # Run the generator first, saving into a named run with date-stamped folder
 # Get date and time for unique run naming
 RUN_NAME="Test_run_guppy_$(date +'%Y%m%d_%H%M%S')"
-export QUILLFUZZ_RUN_DIR="$(pwd)/local_saved_circuits/$RUN_NAME"
-python src/gen_w_improve.py --config_file run_configs/guppy_test_run_config.yaml --run_name $RUN_NAME
+RUN_DIR="$(pwd)/local_saved_circuits/$RUN_NAME"
+python src/gen_w_improve.py --config_file run_configs/guppy_test_run_config.yaml --run_name "$RUN_NAME" --output_dir "$RUN_DIR"
 
-ASSEMBLED_DIR="local_saved_circuits/$RUN_NAME/assembled"
+ASSEMBLED_DIR="$RUN_DIR/assembled"
 if [ ! -d "$ASSEMBLED_DIR" ]; then
     echo "Error: Assembled directory '$ASSEMBLED_DIR' not found."
     echo "This likely means no valid circuits were generated."

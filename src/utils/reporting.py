@@ -12,6 +12,20 @@ KS_TEST_PATTERN = re.compile(r"Optimisation level\s+(\d+)\s+ks-test p-value:\s*(
 def _has_compilation_error(compilation_metrics: Dict[str, Any]) -> bool:
     return bool((compilation_metrics or {}).get("error_summary") or (compilation_metrics or {}).get("error_full"))
 
+
+def coverage_from_metrics(metrics: Dict[str, Any], compile_only: bool) -> float:
+    if compile_only:
+        compilation_metrics = metrics.get("compilation", {})
+        if compilation_metrics:
+            return float(compilation_metrics.get("coverage_percent", 0.0) or 0.0)
+        return float(metrics.get("coverage_percent", 0.0) or 0.0)
+
+    execution_metrics = metrics.get("execution", {})
+    if execution_metrics:
+        return float(execution_metrics.get("coverage_percent", 0.0) or 0.0)
+
+    return float(metrics.get("coverage_percent", 0.0) or 0.0)
+
 def build_metrics_row(model: str, file_name: str, success: bool, execution_metrics: Dict[str, Any], compilation_metrics: Dict[str, Any], cost: float = 0.0) -> Dict[str, Any]:
     """Build a single metrics row for CSV export. Includes optional `cost` field."""
     row = {
@@ -25,6 +39,25 @@ def build_metrics_row(model: str, file_name: str, success: bool, execution_metri
     row.update(flatten_metrics_for_csv("compilation", compilation_metrics or {}))
     row.update(flatten_metrics_for_csv("execution", execution_metrics or {}))
     return row
+
+
+def build_file_result_metrics_row(model_name: str, result: Any, compile_only: bool) -> Dict[str, Any]:
+    metrics_root = getattr(result, "metrics", {}) or {}
+    execution_metrics = metrics_root.get("execution", {})
+    compilation_metrics = metrics_root.get("compilation", {})
+
+    if compile_only:
+        execution_metrics = {}
+
+    file_path = getattr(result, "file_path", "")
+    return {
+        "model": model_name,
+        "file": os.path.basename(file_path),
+        "success": getattr(result, "success", False),
+        "coverage_percent": coverage_from_metrics(metrics_root, compile_only),
+        **flatten_metrics_for_csv("execution", execution_metrics),
+        **flatten_metrics_for_csv("compilation", compilation_metrics),
+    }
 
 
 def build_phase_summary(
@@ -93,6 +126,70 @@ def build_phase_summary(
 """
 
     return summary_log, summary
+
+
+def build_file_result_summary(
+    model_name: str,
+    results: List[Any],
+    compile_only: bool,
+    duration_seconds: Optional[float] = None,
+    ks_low_threshold: Optional[float] = None,
+    include_runtime_fields: bool = True,
+) -> Dict[str, Any]:
+    total = len(results)
+    successful = sum(1 for result in results if getattr(result, "success", False))
+    successful_coverages = [coverage_from_metrics(getattr(result, "metrics", {}) or {}, compile_only) for result in results if getattr(result, "success", False)]
+    avg_coverage = sum(successful_coverages) / len(successful_coverages) if successful_coverages else 0.0
+
+    def _error_payload(result: Any) -> Dict[str, str]:
+        metrics_root = getattr(result, "metrics", {}) or {}
+        execution_metrics = metrics_root.get("execution", {})
+        compilation_metrics = metrics_root.get("compilation", {})
+        result_error = getattr(result, "error", "")
+        error_details = build_error_details([
+            {
+                "error": execution_metrics.get("error_summary")
+                or compilation_metrics.get("error_summary")
+                or result_error,
+                "error_full": execution_metrics.get("error_full")
+                or compilation_metrics.get("error_full")
+                or result_error,
+            }
+        ])
+        return error_details
+
+    summary: Dict[str, Any] = {
+        "model": model_name,
+        "total_files": total,
+        "successful_files": successful,
+        "failed_files": total - successful,
+        "pass_rate": (successful / total * 100.0) if total else 0.0,
+        "average_coverage_percent": avg_coverage,
+        "per_file_reports": [
+            {
+                "file": os.path.basename(getattr(result, "file_path", "")),
+                "success": getattr(result, "success", False),
+                "coverage_percent": coverage_from_metrics(getattr(result, "metrics", {}) or {}, compile_only),
+                "error": _error_payload(result)["error"],
+                "error_full": _error_payload(result)["error_full"],
+            }
+            for result in results
+        ],
+    }
+
+    if include_runtime_fields:
+        low_ks_count = sum(1 for result in results if getattr(result, "low_ks_test_levels", []))
+        summary.update(
+            {
+                "files_with_low_ks": low_ks_count,
+                "ks_low_threshold": ks_low_threshold,
+                "compile_only": compile_only,
+                "duration_seconds": duration_seconds or 0.0,
+                "avg_time_per_file_seconds": ((duration_seconds or 0.0) / total) if total else 0.0,
+            }
+        )
+
+    return summary
 
 
 class Logger:
@@ -212,6 +309,11 @@ def _summary_from_error(error: Any, max_len: Optional[int] = None) -> str:
     if max_len is not None and max_len > 0 and len(summary) > max_len:
         return f"{summary[:max_len]}..."
     return summary
+
+
+def summarize_error_text(error_text: str, fallback: str = "") -> str:
+    summary = _summary_from_error(error_text)
+    return summary or fallback
 
 
 def build_error_details(errors: List[Any], max_summary_len: Optional[int] = None) -> Dict[str, str]:
