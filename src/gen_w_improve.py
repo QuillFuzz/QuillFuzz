@@ -14,7 +14,7 @@ from utils.reporting import Logger
 from utils.utils import generate_complexity_scatter_plots, generate_summary_plot, sanitize_model_name
 
 
-SUPPORTED_LANGUAGES = ("guppy", "qiskit", "pytket", "pennylane")
+SUPPORTED_LANGUAGES = ("guppy", "qiskit", "cirq", "pytket", "pennylane")
 
 
 def main():

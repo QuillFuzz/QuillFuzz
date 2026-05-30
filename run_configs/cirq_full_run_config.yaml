@@ -1,0 +1,18 @@
+language: cirq
+models:
+  - deepseek/deepseek-v4-flash
+
+n_programs: 500
+n_fixing_cycles: 2
+enable_mutation: true
+n_mutations: 4500
+mutation_fix_cycles: 1
+max_workers: 15
+n_assemble: 50000
+n_circuits_per_assembly: 3
+verbose: false
+reasoning_effort: high
+ks_low_threshold: 0.0001
+
+improve_prompt: false
+improver_model: deepseek/deepseek-reasoner

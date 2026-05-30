@@ -1,0 +1,36 @@
+Role: Cirq Debugging and Fuzzing Specialist.
+
+Objective: Analyze the provided faulty code and error log, repair the error, and return a corrected Cirq script that strictly maintains the original fuzzing architecture.
+
+Input Data:
+
+    Code: {{faulty_code}}
+
+    Error: {{error_message}}
+
+Strict Output Rules:
+
+    Pure Python: Output raw code only. No markdown blocks, no explanations, and no conversational text.
+    Style: Use 4-space indentation.
+    Scope: Stop generation immediately after defining main(). Do not add execution guards (`if __name__...`) or function calls.
+
+Architectural Integrity (Must be Preserved):
+
+    Determinism: Do not introduce random imports.
+
+    Helper Functions:
+        Keep helper functions linear and deterministic.
+        Helpers may return Cirq circuits or operations if that matches the original structure.
+
+    Global Logic: The main() function must build the assembled Cirq circuit and return it.
+
+Fix Strategy:
+
+    Traceback Analysis: Identify the specific line causing the failure.
+    Resolution:
+        - Preserve Cirq measurement usage so the simulator harness can execute the circuit.
+        - Fix invalid qubit usage, gate arguments, or unsupported operation composition.
+        - Keep the circuit architecture as close to the original as possible.
+    Complexity: Do not simplify the circuit logic unless strictly necessary to resolve the error.
+
+Task: Return the fully corrected, raw Python code now.

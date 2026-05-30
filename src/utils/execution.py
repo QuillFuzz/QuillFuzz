@@ -12,6 +12,8 @@ from .ast_ops import (
     wrap_for_testing_guppy,
     wrap_for_compilation_qiskit,
     wrap_for_testing_qiskit,
+    wrap_for_compilation_cirq,
+    wrap_for_testing_cirq,
     wrap_for_compilation_pytket,
     wrap_for_testing_pytket,
     wrap_for_compilation_pennylane,
@@ -28,6 +30,7 @@ DEFAULT_REPORT_TIMEOUT = 60
 LANGUAGE_DEFAULT_SOURCES = {
     "guppy": "guppylang_internals",
     "qiskit": "qiskit",
+    "cirq": "cirq",
     "pytket": "pytket",
     "pennylane": "pennylane",
 }
@@ -148,6 +151,8 @@ def _wrap_code_for_compilation(clean_code: str, language: str) -> str:
         return wrap_for_compilation_guppy(clean_code)
     if language == "qiskit":
         return wrap_for_compilation_qiskit(clean_code)
+    if language == "cirq":
+        return wrap_for_compilation_cirq(clean_code)
     if language == "pytket":
         return wrap_for_compilation_pytket(clean_code)
     if language == "pennylane":
@@ -160,6 +165,8 @@ def _wrap_code_for_testing(clean_code: str, language: str, circuit_id: int) -> s
         return wrap_for_testing_guppy(clean_code, circuit_id)
     if language == "qiskit":
         return wrap_for_testing_qiskit(clean_code, circuit_id)
+    if language == "cirq":
+        return wrap_for_testing_cirq(clean_code, circuit_id)
     if language == "pytket":
         return wrap_for_testing_pytket(clean_code, circuit_id)
     if language == "pennylane":

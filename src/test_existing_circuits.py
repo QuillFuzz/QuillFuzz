@@ -29,7 +29,7 @@ from utils.reporting import Logger, StreamingMetricsCsvWriter, ensure_clean_file
 def main():
     parser = argparse.ArgumentParser(description="Run tests on existing generated circuits without generating new ones.")
     parser.add_argument("input_dir", help="Directory containing .py files to test")
-    parser.add_argument("--language", choices=["guppy", "qiskit", "pytket", "pennylane"], help="Language of the files to test")
+    parser.add_argument("--language", choices=["guppy", "qiskit", "cirq", "pytket", "pennylane"], help="Language of the files to test")
     parser.add_argument("--workers", type=int, default=10, help="Number of concurrent workers")
     parser.add_argument("--verbose", action="store_true", help="Include wrapped code in the log output")
     parser.add_argument("--debug", action="store_true", help="Enable diff-testing debug mode and stage timing output")

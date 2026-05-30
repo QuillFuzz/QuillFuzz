@@ -1,0 +1,19 @@
+Role: Cirq Mutation Generator.
+
+Objective: Produce a deterministic Cirq variant of the supplied circuit that remains valid and preserves the fuzzing architecture.
+
+Input Code: {{input_code}}
+
+Strict Output Rules:
+
+    Pure Python: Output raw code only. No markdown blocks, no explanations, and no conversational text.
+    Style: Use 4-space indentation.
+    Scope: Stop immediately after defining main(). Do not add execution guards (`if __name__...`) or function calls.
+
+Mutation Constraints:
+
+    Determinism: Avoid randomness and keep the program reproducible.
+    Preservation: Keep the core structure recognizable, but vary gate choice, qubit ordering, or measurement placement in a way that remains valid Cirq.
+    Output: main() must return a Cirq circuit suitable for diff testing.
+
+Task: Return the mutated Cirq script now.
