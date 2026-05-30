@@ -110,6 +110,7 @@ def main():
     stop_controller.start()
 
     assembled_all_stats = []
+    assembled_all_reports = []
     mutation_all_stats = []
     mutation_all_metrics = []
     generated_metrics_by_model = {}
@@ -178,7 +179,7 @@ def main():
             if assembly_files:
                 assembly_logfile = os.path.join(common_run_dir, "assembly_execution.log")
                 assembly_logger = Logger(assembly_logfile)
-                assembled_files, assembled_metrics = assemble_circuits(
+                assembled_files, assembled_metrics, assembled_reports = assemble_circuits(
                     model, assembly_files, args, common_run_dir, assembly_logger
                 )
 
@@ -192,6 +193,8 @@ def main():
                         "valid_programs": sum(1 for m in assembled_metrics if m.get("success")),
                         "avg_quality_score": 0.0,
                     })
+                if assembled_reports:
+                    assembled_all_reports.append({"model": f"{model}::assembled", "entries": assembled_reports})
 
                 if stop_controller.stop_requested:
                     main_logger.log("Stop requested during assembly; skipping remaining models.")
@@ -246,6 +249,7 @@ def main():
         "language": args.language,
         "models": args.models,
         "model_summaries": assembled_all_stats,
+        "per_file_reports": assembled_all_reports,
     }
     with open(assembled_summary_path, "w", encoding="utf-8") as f:
         json.dump(assembled_summary, f, indent=2)

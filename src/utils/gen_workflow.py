@@ -823,6 +823,7 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
     attempts = 0
     metrics_rows = []
     assembled_metrics = []
+    report_entries = []
     pbar = tqdm(total=args.n_assemble, desc=f"Assembling {model}")
 
     def _run_assembled_candidate(path, code, cid):
@@ -871,7 +872,7 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
                     logger.log(f"Preparing to run assembled candidate {os.path.basename(out_path)}...")
 
                     future = executor.submit(_run_assembled_candidate, out_path, assembled_code, submitted)
-                    futures[future] = (out_path, assembled_code, submitted)
+                    futures[future] = (out_path, assembled_code, submitted, selection)
                     submitted += 1
 
                 except Exception as e:
@@ -900,7 +901,7 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
                 continue
 
             for future in done:
-                out_path, assembled_code, cid = futures.pop(future)
+                out_path, assembled_code, cid, selection = futures.pop(future)
                 try:
                     result = future.result()
                     if isinstance(result, tuple) and len(result) == 4:
@@ -915,6 +916,7 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
                 execution_metrics = metrics or {}
                 low_ks_values = populate_ks_test_metrics(execution_metrics, output, args.ks_low_threshold)
                 file_name = os.path.basename(out_path)
+                source_files = [os.path.basename(p) for p in selection] if selection else []
 
                 compilation_metrics = execution_metrics.get("compilation", {}) if metrics else {}
                 runtime_error_full = str(execution_metrics.get("error_full") or error or "").strip()
@@ -961,6 +963,27 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
                         os.remove(out_path)
                     except Exception:
                         pass
+                # Build per-file report entry
+                error_details = build_error_details([
+                    {
+                        "error": execution_metrics.get("error_summary")
+                            or compilation_metrics.get("error_summary")
+                            or runtime_error_summary,
+                        "error_full": execution_metrics.get("error_full")
+                            or compilation_metrics.get("error_full")
+                            or runtime_error_full,
+                    }
+                ])
+
+                report_entries.append({
+                    "file": file_name,
+                    "source_files": source_files,
+                    "success": success,
+                    "coverage_percent": execution_metrics.get("coverage_percent", 0.0) if execution_metrics else 0.0,
+                    "low_ks_test_levels": low_ks_values,
+                    "error": error_details["error"],
+                    "error_full": error_details["error_full"],
+                })
 
     pbar.close()
 
@@ -987,4 +1010,4 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
     except Exception:
         logger.log(f"Warning: failed to list assembled files in {out_dir}")
 
-    return assembled_files, assembled_metrics
+    return assembled_files, assembled_metrics, report_entries
