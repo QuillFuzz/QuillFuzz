@@ -41,15 +41,15 @@ Objective: Analyze the provided faulty code and error log, repair the error, and
 - **Resolution:**
     
     - **Device configuration:** Ensure `qml.device` is correctly instantiated with the appropriate `wires` specification (either an integer or a list of labels) and device name (e.g., `'default.qubit'`).
-      - **CRITICAL:** Always include `shots=1000` (or similar number) when creating the device, e.g., `qml.device('default.qubit', wires=n, shots=1000)`. This enables sampling-based measurements and is required for the fuzzing harness.
+      - **CRITICAL:** Do not set shots on the device constructor. Create the device without shots, then pass shots to the QNode, e.g., `qml.QNode(circuit, dev, shots=1000)`. This enables sampling-based measurements and is required for the fuzzing harness.
     - **Parameter indexing:** Circuit function parameters are passed as **numpy arrays** during execution. If the error is "TypeError: 'float' object is not subscriptable" or similar indexing errors on parameters, verify that the code properly handles array indexing:
       - Extract elements using valid indices: `x[0]`, `x[i % len(x)]`, or similar.
       - If a parameter is expected to be a scalar, ensure you extract it from the array (e.g., `x[0]`).
       - Use defensive indexing if array size is unknown.
     - **Operation arguments:** Verify that parameterized gates have their parameters and wires correctly passed. E.g., `qml.RX(param, wires=wire)` instead of ignoring `wires=` kwargs or using lists for single parameter values inappropriately.
     - **Measurement compatibility:** If the error mentions "not accepted for analytic simulation" or similar:
-      - `qml.sample(observable)` (with an observable like `qml.PauliY(wires=0)`) requires the device to have shots enabled (e.g., `qml.device('default.qubit', wires=n, shots=1000)`).
-      - Use `qml.expval(observable)` instead if analytic evaluation is required, or add `shots=1000` to the device.
+      - `qml.sample(observable)` (with an observable like `qml.PauliY(wires=0)`) requires the circuit to run with shots enabled (e.g., `qml.QNode(circuit, dev, shots=1000)`).
+      - Use `qml.expval(observable)` instead if analytic evaluation is required, or add shots at the QNode level.
       - Prefer `qml.probs()` for probability distributions and plain `qml.sample()` for basis measurements without observables.
     - **Observables & Measurements:** Make sure measurements like `qml.expval()` take a valid observable operator like `qml.PauliZ(wires=0)`, while methods like `qml.probs()` typically take `wires=[...]` or `op=...` as arguments directly.
     - **Returns:** Ensure the quantum function properly returns the measurements (as a single entity or tuple) rather than `None`.

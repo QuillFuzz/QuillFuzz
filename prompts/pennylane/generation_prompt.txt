@@ -19,7 +19,7 @@
       - `qml.expval(observable)` and `qml.var(observable)` work with any device.
       - `qml.probs(wires=[...])` or `qml.probs(op=...)` works with any device.
       - `qml.sample()` **without** an observable (e.g., `qml.sample()` or `qml.sample(wires=[...])`) works with any device for basis measurement.
-      - `qml.sample(observable)` **with an observable** (e.g., `qml.sample(qml.PauliZ(0))`) requires a device with shots enabled (e.g., `qml.device('default.qubit', wires=n, shots=1000)`).
+      - `qml.sample(observable)` **with an observable** (e.g., `qml.sample(qml.PauliZ(0))`) requires the circuit to run with shots enabled (e.g., `qml.QNode(circuit, dev, shots=1000)`).
       - **Recommended:** Use `qml.expval()` for expectation values, `qml.probs()` for probability distributions, and plain `qml.sample()` for bit sampling. Avoid `qml.sample(observable)` unless you are sure shots are enabled.
 - **Parametric gate arguments:** For parameterized gates (e.g. `qml.RX`), the angle is the first positional argument, the target wires are specified via the `wires` keyword argument. Example: `qml.RX(0.5, wires=0)`.
   - **Important:** Circuit function parameters will be passed as **numpy arrays**, not scalars. If you need a scalar angle, extract it from the array (e.g., `x[0]` if `x` is a numpy array). If indexing, always check bounds or use modulo to handle variable array sizes.
@@ -33,8 +33,8 @@
 
 #### Main Function (Global Logic)
 
-- **Initialization:** Define a device within `main`, e.g. `dev = qml.device('default.qubit', wires=num_wires, shots=1000)`.
-  - **IMPORTANT: Always include `shots=1000` (or similar) when creating the device.** This enables sampling-based measurements and is required for differential testing.
+- **Initialization:** Define a device within `main`, e.g. `dev = qml.device('default.qubit', wires=num_wires)`.
+  - **IMPORTANT: Do not set shots on the device constructor.** If sampling is needed, create the device without shots and attach shots at the QNode level, e.g. `qnode = qml.QNode(circuit, dev, shots=1000)`.
 - **Quantum Node Definition:** Define a quantum function (e.g., `def circuit(x): ...`) and wrap it with a QNode explicitly `qnode = qml.QNode(circuit, dev)` or use the decorator within `main()`.
 - **Parameters:** Circuit function parameters will be passed as **numpy arrays** during execution. If you index into them (e.g., `x[i]`), ensure the code handles potential index errors gracefully (e.g., use `x[i % len(x)]` or check bounds).
 - **Calling Helpers:** Inside the quantum function, call previously defined helper functions directly, passing parameters or extracted values as needed.
