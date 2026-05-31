@@ -14,7 +14,7 @@ import shutil
 
 
 class Base():
-    OUTPUT_DIR = (pathlib.Path(__file__).parent.parent.parent / "local_saved_circuits").resolve()
+    OUTPUT_DIR = (pathlib.Path(__file__).parent.parent.parent.parent / "local_saved_circuits").resolve()
     TIMEOUT_SECONDS = 200
     KS_THRESHOLD = 0.01
 
@@ -46,19 +46,34 @@ class Base():
             resolved_env_dir.mkdir(parents=True, exist_ok=True)
             return resolved_env_dir
 
+        source_file_env = os.getenv("QUILLFUZZ_SOURCE_FILE")
+        if source_file_env:
+            source_path = pathlib.Path(source_file_env).expanduser().resolve()
+            if source_path.exists() and source_path.suffix == ".py":
+                source_parent = source_path.parent
+                if source_parent.name in {"generated", "assembled", "failed_programs", "training_phase"}:
+                    run_dir = source_parent.parent
+                else:
+                    run_dir = source_parent
+
+                if run_dir.name in {"generated", "assembled", "failed_programs"}:
+                    run_dir = run_dir.parent
+
+                run_dir.mkdir(parents=True, exist_ok=True)
+                return run_dir
+
         output_dir = pathlib.Path(self.OUTPUT_DIR).resolve()
 
-        if output_dir.name.startswith("Complete_run"):
-            return output_dir
-
         try:
-            complete_run_dirs = [p for p in output_dir.iterdir() if p.is_dir() and p.name.startswith("Complete_run")]
-            if complete_run_dirs:
-                return max(complete_run_dirs, key=lambda p: p.stat().st_mtime)
+            run_dirs = [p for p in output_dir.iterdir() if p.is_dir()]
+            if run_dirs:
+                return max(run_dirs, key=lambda p: p.stat().st_mtime)
         except Exception:
             pass
 
-        return output_dir
+        fallback_dir = output_dir / "default_run"
+        fallback_dir.mkdir(parents=True, exist_ok=True)
+        return fallback_dir
 
     def get_interesting_circuits_dir(self) -> pathlib.Path:
         return self.run_output_dir / "interesting_circuits"

@@ -93,6 +93,10 @@ def main():
         traceback.print_exc()
         sys.exit(3)
 
+    # Ensure all execution subprocesses save artifacts (e.g., interesting circuits)
+    # into this run directory rather than falling back to a default path.
+    os.environ["QUILLFUZZ_RUN_DIR"] = common_run_dir
+
     # Debug environment variable to enable debug mode in subprocesses (diff_testing test harness)
     os.environ["QUILLFUZZ_DEBUG"] = "1" if args.debug else "0"
 
