@@ -8,7 +8,7 @@ enable_mutation: true
 n_mutations: 4500
 mutation_fix_cycles: 1
 max_workers: 15
-n_assemble: 50000
+n_assemble: 100000
 n_circuits_per_assembly: 3
 verbose: false
 reasoning_effort: high
