@@ -4,7 +4,8 @@ import subprocess
 import tempfile
 import time
 import json
-from typing import Any, Dict, Optional, Tuple
+import shutil
+from typing import Any, Dict, List, Optional, Tuple
 from .utils import strip_markdown_syntax, parse_time_metrics
 import re
 from .ast_ops import (
@@ -64,6 +65,356 @@ def _build_execution_env(
         f"{project_root}{os.pathsep}{current_pythonpath}" if current_pythonpath else project_root
     )
     return env
+
+
+def _coverage_artifact_dir(explicit_dir: Optional[str] = None) -> Optional[str]:
+    artifact_dir = explicit_dir or os.environ.get("QUILLFUZZ_COVERAGE_ARTIFACT_DIR")
+    if not artifact_dir:
+        return None
+    os.makedirs(artifact_dir, exist_ok=True)
+    return artifact_dir
+
+
+def _coverage_artifact_path(artifact_dir: str, coverage_file: str) -> str:
+    return os.path.join(artifact_dir, os.path.basename(coverage_file))
+
+
+def _persist_coverage_artifact(coverage_file: str, artifact_dir: Optional[str]) -> Optional[str]:
+    if not artifact_dir:
+        return None
+    try:
+        artifact_path = _coverage_artifact_path(artifact_dir, coverage_file)
+        shutil.copy2(coverage_file, artifact_path)
+        return artifact_path
+    except Exception:
+        return None
+
+
+def list_coverage_artifacts(artifact_dir: str) -> list[str]:
+    if not artifact_dir or not os.path.isdir(artifact_dir):
+        return []
+    return sorted(
+        os.path.join(artifact_dir, entry)
+        for entry in os.listdir(artifact_dir)
+        if entry.endswith(".coverage") and os.path.isfile(os.path.join(artifact_dir, entry))
+    )
+
+
+def combine_coverage_artifacts(
+    artifact_dir: str,
+    python_executable: str = sys.executable,
+) -> Tuple[Optional[str], str]:
+    if not artifact_dir:
+        return None, "coverage artifact directory was not provided"
+
+    coverage_files = [
+        path
+        for path in list_coverage_artifacts(artifact_dir)
+        if os.path.basename(path) != ".coverage"
+    ]
+    if not coverage_files:
+        return None, "no retained coverage artifacts were found"
+
+    env = os.environ.copy()
+    env["COVERAGE_FILE"] = os.path.join(artifact_dir, ".coverage")
+
+    try:
+        combine_result = subprocess.run(
+            [python_executable, "-m", "coverage", "combine", "--keep", *coverage_files],
+            capture_output=True,
+            text=True,
+            timeout=DEFAULT_REPORT_TIMEOUT,
+            env=env,
+            cwd=artifact_dir,
+        )
+    except subprocess.TimeoutExpired:
+        return None, f"coverage combine timed out after {DEFAULT_REPORT_TIMEOUT} seconds"
+    except Exception as error:
+        return None, str(error)
+
+    if combine_result.returncode != 0:
+        message = combine_result.stderr.strip() if combine_result.stderr else "coverage combine failed"
+        return None, message
+
+    combined_data_file = os.path.join(artifact_dir, ".coverage")
+    if not os.path.exists(combined_data_file):
+        return None, "combined coverage data file was not created"
+
+    return combined_data_file, ""
+
+
+def generate_coverage_report_from_data_file(
+    data_file: str,
+    report_format: str = "json",
+    output_path: Optional[str] = None,
+    python_executable: str = sys.executable,
+) -> Tuple[str, str]:
+    if not data_file:
+        return "", "coverage data file was not provided"
+
+    env = os.environ.copy()
+    env["COVERAGE_FILE"] = data_file
+
+    command = [python_executable, "-m", "coverage", report_format]
+    if report_format == "json":
+        command.append("-i")
+    if report_format in {"json", "xml", "lcov"} and output_path:
+        command.extend(["-o", output_path])
+    elif report_format == "html" and output_path:
+        command.extend(["-d", output_path])
+
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=DEFAULT_REPORT_TIMEOUT,
+            env=env,
+        )
+    except subprocess.TimeoutExpired:
+        return "", f"coverage {report_format} timed out after {DEFAULT_REPORT_TIMEOUT} seconds"
+    except Exception as error:
+        return "", str(error)
+
+    stdout = (result.stdout or "").strip()
+    stderr = (result.stderr or "").strip()
+    if result.returncode != 0:
+        return stdout, stderr or f"coverage {report_format} failed"
+
+    return stdout, ""
+
+
+def compact_coverage_summary(report_data: Dict[str, Any]) -> Dict[str, Any]:
+    totals = report_data.get("totals", {}) if isinstance(report_data, dict) else {}
+    percent_covered = float(totals.get("percent_covered", 0.0) or 0.0)
+    covered_lines = int(totals.get("covered_lines", 0) or 0)
+    num_statements = int(totals.get("num_statements", 0) or 0)
+    missing_lines = int(totals.get("missing_lines", 0) or 0)
+    return {
+        "percent_covered": percent_covered,
+        "percent_covered_display": f"{percent_covered:.2f}%",
+        "covered_lines": covered_lines,
+        "num_statements": num_statements,
+        "missing_lines": missing_lines,
+    }
+
+
+def load_compact_coverage_summary(json_report_file: str) -> Dict[str, Any]:
+    if not json_report_file or not os.path.exists(json_report_file):
+        return {}
+    try:
+        with open(json_report_file, "r", encoding="utf-8") as file_handle:
+            report_data = json.load(file_handle)
+    except Exception:
+        return {}
+    return compact_coverage_summary(report_data)
+
+
+def format_hourly_coverage_points(hourly_points: List[Dict[str, Any]]) -> List[str]:
+    lines: List[str] = []
+    for point in hourly_points:
+        hour = point.get("hour", 0)
+        percent = float(point.get("percent_covered", 0.0) or 0.0)
+        covered = int(point.get("covered_lines", 0) or 0)
+        total = int(point.get("num_statements", 0) or 0)
+        if hour == "end":
+            label = "Run End"
+        else:
+            label = f"Hour {int(hour)}"
+        lines.append(f"{label}: {percent:.2f}% coverage ({covered} covered lines / {total} executable lines)")
+    return lines
+
+
+_NO_COVERAGE_DATA_MARKERS = (
+    "No data to report",
+    "No data was collected",
+    "no-data-collected",
+)
+
+
+def _is_no_coverage_data_error(message: str) -> bool:
+    """True for coverage's benign "nothing measured" condition.
+
+    A generated program that never imports the monitored library produces a
+    coverage data file with no data for the configured source. Reporting on it
+    exits non-zero with one of these messages. That is not a real failure — the
+    bucket simply has no coverage yet — so callers should skip it, not abort.
+    """
+    if not message:
+        return False
+    lowered = message.lower()
+    return any(marker.lower() in lowered for marker in _NO_COVERAGE_DATA_MARKERS)
+
+
+def build_hourly_coverage_timeline(
+    artifact_dir: str,
+    run_start_epoch: float,
+    run_end_epoch: Optional[float] = None,
+    interval_seconds: int = 3600,
+    python_executable: str = sys.executable,
+) -> Tuple[List[Dict[str, Any]], str]:
+    if not artifact_dir:
+        return [], "coverage artifact directory was not provided"
+
+    raw_files: List[Tuple[str, float]] = []
+    for path in list_coverage_artifacts(artifact_dir):
+        name = os.path.basename(path)
+        if name in {".coverage", ".coverage.timeline"}:
+            continue
+        try:
+            raw_files.append((path, os.path.getmtime(path)))
+        except OSError:
+            continue
+
+    if not raw_files:
+        return [], "no retained coverage artifacts were found"
+
+    raw_files.sort(key=lambda item: item[1])
+    if run_end_epoch is None:
+        run_end_epoch = raw_files[-1][1]
+
+    timeline_end = max(float(run_end_epoch), float(run_start_epoch))
+    max_hour = int((timeline_end - float(run_start_epoch)) // float(interval_seconds))
+
+    combined_data_file = os.path.join(artifact_dir, ".coverage.timeline")
+    _safe_remove(combined_data_file)
+    combine_env = os.environ.copy()
+    combine_env["COVERAGE_FILE"] = combined_data_file
+
+    points: List[Dict[str, Any]] = []
+    last_compact: Dict[str, Any] = {}
+    consumed = 0
+    total_files = len(raw_files)
+
+    for hour in range(max_hour + 1):
+        # Hour `h` covers the interval [start, start + (h + 1) * interval): a
+        # cumulative bucket of every artifact produced up to the end of that
+        # hour. A sub-hour run therefore folds all of its artifacts into hour 0.
+        cutoff = float(run_start_epoch) + ((hour + 1) * float(interval_seconds))
+        new_files: List[str] = []
+        while consumed < total_files and raw_files[consumed][1] <= cutoff:
+            new_files.append(raw_files[consumed][0])
+            consumed += 1
+
+        if new_files:
+            cmd = [
+                python_executable,
+                "-m",
+                "coverage",
+                "combine",
+                "--keep",
+                "--append",
+                "--data-file",
+                combined_data_file,
+                *new_files,
+            ]
+            try:
+                combine_result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=DEFAULT_REPORT_TIMEOUT,
+                    env=combine_env,
+                    cwd=artifact_dir,
+                )
+            except subprocess.TimeoutExpired:
+                return points, f"coverage timeline combine timed out after {DEFAULT_REPORT_TIMEOUT} seconds"
+            except Exception as error:
+                return points, str(error)
+
+            if combine_result.returncode != 0:
+                message = combine_result.stderr.strip() if combine_result.stderr else "coverage timeline combine failed"
+                return points, message
+
+            timeline_json = os.path.join(artifact_dir, f"coverage_timeline_hour_{hour}.json")
+            _, report_error = generate_coverage_report_from_data_file(
+                combined_data_file,
+                report_format="json",
+                output_path=timeline_json,
+                python_executable=python_executable,
+            )
+            if report_error and not _is_no_coverage_data_error(report_error):
+                return points, report_error
+
+            # When the bucket has measured data, refresh the running total. A
+            # benign "no data yet" error leaves last_compact untouched so this
+            # hour is simply skipped instead of killing the whole timeline.
+            if not report_error:
+                last_compact = load_compact_coverage_summary(timeline_json)
+            _safe_remove(timeline_json)
+
+        if not last_compact:
+            continue
+
+        point = {
+            "hour": hour,
+            **last_compact,
+        }
+        points.append(point)
+
+    remaining_files = [path for path, _ in raw_files[consumed:]]
+    if remaining_files:
+        cmd = [
+            python_executable,
+            "-m",
+            "coverage",
+            "combine",
+            "--keep",
+            "--append",
+            "--data-file",
+            combined_data_file,
+            *remaining_files,
+        ]
+        try:
+            combine_result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=DEFAULT_REPORT_TIMEOUT,
+                env=combine_env,
+                cwd=artifact_dir,
+            )
+        except subprocess.TimeoutExpired:
+            return points, f"coverage timeline combine timed out after {DEFAULT_REPORT_TIMEOUT} seconds"
+        except Exception as error:
+            return points, str(error)
+
+        if combine_result.returncode != 0:
+            message = combine_result.stderr.strip() if combine_result.stderr else "coverage timeline combine failed"
+            return points, message
+
+    if not os.path.exists(combined_data_file):
+        return [], "failed to build hourly coverage timeline"
+
+    final_json = os.path.join(artifact_dir, "coverage_timeline_final.json")
+    _, final_report_error = generate_coverage_report_from_data_file(
+        combined_data_file,
+        report_format="json",
+        output_path=final_json,
+        python_executable=python_executable,
+    )
+    if final_report_error and not _is_no_coverage_data_error(final_report_error):
+        return points, final_report_error
+
+    final_compact = {} if final_report_error else load_compact_coverage_summary(final_json)
+    _safe_remove(final_json)
+
+    # Cap the timeline with the cumulative total. Skip it only when nothing was
+    # ever measured (no hourly points and no final data) so we don't emit a
+    # misleading zero-coverage end point.
+    if final_compact or points:
+        points.append(
+            {
+                "hour": "end",
+                "elapsed_seconds": max(0.0, float(run_end_epoch) - float(run_start_epoch)),
+                **final_compact,
+            }
+        )
+
+    if not points:
+        return [], "no coverage data was collected from any retained artifact"
+
+    return points, ""
 
 
 def _safe_remove(path: Optional[str]) -> None:
@@ -193,6 +544,7 @@ def _execute_python_code(
     coverage_source: str = None,
     source_file_path: str = None,
     ks_low_threshold: Optional[float] = None,
+    coverage_artifact_dir: Optional[str] = None,
 ):
     """
     Internal helper to execute prepared Python code with coverage and metrics tracking.
@@ -204,6 +556,7 @@ def _execute_python_code(
     metrics_file = None
     coverage_file = None
     json_report_file = None
+    retained_coverage_file = None
     
     try:
         # Create a temporary file
@@ -214,6 +567,7 @@ def _execute_python_code(
         metrics_file = temp_file_path + ".time"
         coverage_file = temp_file_path + ".coverage"
         json_report_file = temp_file_path + ".json"
+        artifact_dir = _coverage_artifact_dir(coverage_artifact_dir)
         
         try:
             start_time = time.time()
@@ -255,6 +609,14 @@ def _execute_python_code(
                     metrics["coverage_percent"] = cov_percent
                 elif cov_error:
                     metrics["coverage_error"] = cov_error
+
+                retained_coverage_file = _persist_coverage_artifact(coverage_file, artifact_dir)
+                if retained_coverage_file:
+                    metrics["coverage_artifact_path"] = retained_coverage_file
+                    metrics["coverage_artifact_dir"] = artifact_dir
+                elif artifact_dir:
+                    metrics["coverage_artifact_dir"] = artifact_dir
+                    metrics["coverage_artifact_error"] = "Failed to persist coverage artifact"
             
             # Calculate combined quality score
             # Heuristic: maximize coverage, wall time, and static complexity signals
@@ -276,7 +638,8 @@ def _execute_python_code(
         finally:
             _safe_remove(temp_file_path)
             _safe_remove(metrics_file)
-            _safe_remove(coverage_file)
+            if retained_coverage_file is None:
+                _safe_remove(coverage_file)
             _safe_remove(json_report_file)
                 
     except subprocess.TimeoutExpired:
@@ -310,6 +673,7 @@ def run_generated_program(
     source_file_path: str = None,
     circuit_id: int = 0,
     ks_low_threshold: Optional[float] = None,
+    coverage_artifact_dir: Optional[str] = None,
 ):
     """
     Execute generated Python program with full test harness (KS diff test).
@@ -328,6 +692,7 @@ def run_generated_program(
         coverage_source,
         source_file_path,
         ks_low_threshold,
+        coverage_artifact_dir,
     )
     return error, stdout, metrics, wrapped_code
 

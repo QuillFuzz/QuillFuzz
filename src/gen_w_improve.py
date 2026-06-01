@@ -9,6 +9,13 @@ import yaml
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.gen_workflow import assemble_circuits, run_mutation_phase, run_production_phase, run_training_phase
+from utils.execution import (
+    build_hourly_coverage_timeline,
+    combine_coverage_artifacts,
+    format_hourly_coverage_points,
+    generate_coverage_report_from_data_file,
+    load_compact_coverage_summary,
+)
 from utils.interactive_stop import GracefulStopController
 from utils.reporting import Logger
 from utils.utils import generate_complexity_scatter_plots, generate_summary_plot, sanitize_model_name
@@ -18,6 +25,7 @@ SUPPORTED_LANGUAGES = ("guppy", "qiskit", "cirq", "pytket", "pennylane")
 
 
 def main():
+    run_start_epoch = time.time()
 
     # Parsing arguments and cleaning them up with warnings for invalid values, as well as handling config file loading and default paths
 
@@ -96,6 +104,10 @@ def main():
     # Ensure all execution subprocesses save artifacts (e.g., interesting circuits)
     # into this run directory rather than falling back to a default path.
     os.environ["QUILLFUZZ_RUN_DIR"] = common_run_dir
+
+    coverage_artifacts_dir = os.path.join(common_run_dir, "coverage_artifacts")
+    os.makedirs(coverage_artifacts_dir, exist_ok=True)
+    os.environ["QUILLFUZZ_COVERAGE_ARTIFACT_DIR"] = coverage_artifacts_dir
 
     # Debug environment variable to enable debug mode in subprocesses (diff_testing test harness)
     os.environ["QUILLFUZZ_DEBUG"] = "1" if args.debug else "0"
@@ -233,12 +245,57 @@ def main():
                 os.path.join(assembled_complexity_root, sanitize_model_name(model)),
             )
 
+    combined_coverage_file = None
+    coverage_summary_path = None
+    coverage_summary_compact = {}
+    coverage_hourly_points = []
+    coverage_hourly_point_text = []
+    coverage_combine_error = ""
+    run_end_epoch = time.time()
+    if os.path.isdir(coverage_artifacts_dir):
+        combined_coverage_file, coverage_combine_error = combine_coverage_artifacts(coverage_artifacts_dir)
+        if combined_coverage_file:
+            coverage_summary_path = os.path.join(coverage_artifacts_dir, "coverage_summary.json")
+            _, coverage_report_error = generate_coverage_report_from_data_file(
+                combined_coverage_file,
+                report_format="json",
+                output_path=coverage_summary_path,
+            )
+            if coverage_report_error:
+                coverage_combine_error = coverage_report_error
+            elif os.path.exists(coverage_summary_path):
+                coverage_summary_compact = load_compact_coverage_summary(coverage_summary_path)
+
+        hourly_points, hourly_error = build_hourly_coverage_timeline(
+            coverage_artifacts_dir,
+            run_start_epoch=run_start_epoch,
+            run_end_epoch=run_end_epoch,
+            interval_seconds=3600,
+        )
+        if hourly_points:
+            coverage_hourly_points = hourly_points
+            coverage_hourly_point_text = format_hourly_coverage_points(hourly_points)
+        elif hourly_error and not coverage_combine_error:
+            coverage_combine_error = hourly_error
+
+    if coverage_hourly_point_text:
+        main_logger.log("Coverage Hourly Timeline:")
+        for line in coverage_hourly_point_text:
+            main_logger.log(f"  {line}")
+
     performance_summary_path = os.path.join(common_run_dir, "performance_summary.json")
     performance_summary = {
         "run_id": run_id,
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "language": args.language,
         "models": args.models,
+        "coverage_artifacts_dir": coverage_artifacts_dir,
+        "coverage_combined_data_file": combined_coverage_file,
+        "coverage_summary_path": coverage_summary_path,
+        "coverage_summary_compact": coverage_summary_compact,
+        "coverage_hourly_points": coverage_hourly_points,
+        "coverage_hourly_points_text": coverage_hourly_point_text,
+        "coverage_combine_error": coverage_combine_error,
         "model_summaries": all_stats,
         "per_file_reports": all_reports,
     }
@@ -252,6 +309,13 @@ def main():
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "language": args.language,
         "models": args.models,
+        "coverage_artifacts_dir": coverage_artifacts_dir,
+        "coverage_combined_data_file": combined_coverage_file,
+        "coverage_summary_path": coverage_summary_path,
+        "coverage_summary_compact": coverage_summary_compact,
+        "coverage_hourly_points": coverage_hourly_points,
+        "coverage_hourly_points_text": coverage_hourly_point_text,
+        "coverage_combine_error": coverage_combine_error,
         "model_summaries": assembled_all_stats,
         "per_file_reports": assembled_all_reports,
     }
