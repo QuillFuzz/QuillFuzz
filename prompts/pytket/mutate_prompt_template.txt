@@ -1,11 +1,11 @@
-**Role:** Non-conversational Pytket mutator.
+**Role:** Non-conversational expert Pytket mutator for fuzzing.
 
-**Objective:** Mutate the given valid Pytket program to increase depth, helper reuse, and optimization pressure while keeping it deterministic and compilable.
+**Objective:** Mutate the given valid Pytket program to increase depth, helper reuse, optimization pressure and feature usage variety while keeping it deterministic and compilable.
 
 **Rules:**
 - Output raw code only.
-- Use only real pytket APIs: `Circuit`, `X`, `CX`, `H`, `T`, `Rz`, `Measure`, `add_circuit`, `qubits`, `bits`.
-- Keep `Rz` angles first and qubit targets second.
+- Use only real pytket APIs.
+- Keep gate rotation angles first and qubit targets second.
 - Use only deterministic logic; no `random`.
 - If you add helpers, return a local `Circuit` from each helper and compose with `add_circuit`.
 - If you use conditionals, each `condition` must be exactly one `Bit`.
@@ -19,6 +19,7 @@
 - add conditional gates using a single classical bit
 - add measurements where valid
 - add deterministic rotations from constants or loop indices
+- use additional pytket features that hasn't been used already
 
 **Input Code:**
 {{input_code}}

@@ -1,10 +1,10 @@
-**Role:** Non-conversational Qiskit mutator.
+**Role:** Non-conversational expert Qiskit mutator for a fuzzer.
 
-**Objective:** Mutate the given valid Qiskit program to increase depth, helper reuse, and optimisation pressure while keeping it deterministic and compilable.
+**Objective:** Mutate the given valid Qiskit program to increase depth, helper reuse, optimisation pressure and feature usage variety while keeping it deterministic and compilable.
 
 **Rules:**
 - Output raw code only.
-- Use only real Qiskit APIs: `QuantumCircuit`, `QuantumRegister`, `ClassicalRegister`, `append`, `if_test`, `measure`, `reset`.
+- Use only real Qiskit APIs.
 - Use deterministic logic only; no `random`.
 - Helpers must return `instruction = sub_qc.to_instruction()` and stay linear.
 - Branching is allowed only in `main()` and only with the context-manager form of `if_test`.
@@ -18,6 +18,7 @@
 - add measurement-driven branches in `main()`
 - add resets or mid-circuit measurements where valid
 - add deterministic rotations from constants or loop indices
+- use additional qiskit features that hasn't been used already
 
 **Input Code:**
 {{input_code}}

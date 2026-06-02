@@ -18,25 +18,20 @@
 2. **Helper Functions (Modular Logic):**
     
     - Must build a local `QuantumCircuit` and return `sub_qc.to_instruction()`.
-        
     - **Hierarchical Composition:** Helpers may append _other_ helper instructions (nesting), in addition to standard gates/resets.
-        
     - **Flow:** Strictly linear sequences. **NO** control flow (`if_test`, loops) allowed inside helpers.
         
 3. **Main Function (Global Logic):**
     
     - Initialize the main `QuantumCircuit`.
-        
     - **Appending Helpers:** Use `qc.append(instruction, qargs, cargs)`.
-        
     - **Argument Integrity:** You **MUST** pass qubit arguments (`qargs`) first, followed by classical bit arguments (`cargs`). Both lists must be populated and explicitly match the exact count of qubits/bits the helper expects.
-        
     - **Dynamic Logic:** Use the official Qiskit context-manager form for measurement branches, for example:
 
         with qc.if_test((clbit, val)) as else_:
-            qc.x(2)
+            ...
         with else_:
-            qc.h(2)
+            ...
 
       Do not use positional-body `qc.if_test(condition, body, qargs, cargs)` calls. Branching is **ONLY** allowed in `main()`, and branch bodies must be written inline inside the `with` block rather than by aliasing `qc` into a separate branch circuit.
         

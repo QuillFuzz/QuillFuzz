@@ -22,7 +22,7 @@ Architectural Integrity (Must be Preserved):
 
     Helper Functions:
 
-        Must return .to_instruction() (or .to_gate()).
+        Return: Must return .to_instruction() (or .to_gate()).
 
         Hierarchical Composition: Preserve existing logic where helpers append other helper instructions. Do not flatten these nested calls.
 

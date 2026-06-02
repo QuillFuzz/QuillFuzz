@@ -4,7 +4,7 @@
 
 ### Strict Output Rules
 
-- **Imports:** The code must begin with the exact imports required. At minimum: `from pytket import Circuit`. If `OpType` is used (for conditional gates), also `from pytket import OpType`. No other imports are allowed.
+- **Imports:** The code must begin with the exact imports required. At minimum: `from pytket import Circuit`. If `OpType` is used (for conditional gates), also `from pytket import OpType`. No other unnecessary imports are allowed.
 - **Pure Python:** Output raw code only. No markdown blocks (```), no intro/outro text, and no comments outside the code.
 - **Style:** Use 4-space indentation.
 - **Scope:** Stop immediately after defining `main()`. DO NOT add execution guards (`if __name__ == "__main__":`), function calls, or print statements.
@@ -13,11 +13,16 @@
 
 - **Determinism:** Logic must be deterministic (no `random` module). Use loop indices or constants for variability.
 - **No Undefined Methods:** Only use methods that actually exist in pytket:
-    - **Gate operations:** `X`, `CX`, `H`, `T`, `Rz`, `Measure` (case‑sensitive – `Measure` with capital M, not `measure`).  
-    - **Composition:** `add_circuit`.  
-    - **Unit access:** `qubits`, `bits`.  
-    - **Absolutely forbidden:** `barrier`, `measure` (lowercase), `append`, `compose`, `add_subcircuit`, any other method not listed.  
-- **Parametric gate order:** For `Rz` (and any other parametric gate you use), the angle (float, radians) is the **first** positional argument, the qubit index (int or Qubit) is the **second**. Example: `qc.Rz(0.5, 0, condition=qc.bits[0])`.  
+    - **Single-qubit gates:** `X`, `Y`, `Z`, `H`, `S`, `Sdg`, `T`, `Tdg`, `V`, `Vdg`, `SX`, `SXdg`, `Phase`, `Rx`, `Ry`, `Rz`, `U1`, `U2`, `U3`, `Reset`.
+    - **Two-qubit gates:** `CX`, `CY`, `CZ`, `CH`, `CS`, `CSdg`, `CSX`, `CSXdg`, `CV`, `CVdg`, `SWAP`, `ISWAP`, `ISWAPMax`, `ECR`, `ZZMax`, `ZZPhase`, `XXPhase`, `YYPhase`, `ESWAP`, `CRx`, `CRy`, `CRz`, `CU1`, `CU3`.
+    - **Three-qubit gates:** `CCX`, `CSWAP`, `XXPhase3`.
+    - **Other gates:** `TK1`, `TK2`, `FSim`, `PhasedX`, `PhasedISWAP`, `GPI`, `GPI2`, `AAMS`, `Sycamore`.
+    - **Measurement:** `Measure` (capital M — never lowercase `measure`).
+    - **Barrier:** `add_barrier(qubit_list)` — takes a list of qubit indices (ints). Example: `qc.add_barrier([0, 1, 2])`.
+    - **Composition:** `add_circuit`.
+    - **Unit access:** `qubits`, `bits`.
+    - **Forbidden:** `measure` (lowercase), `compose`, `add_subcircuit`, any other method not listed.
+- **Parametric gate order:** For parametric gates (`Rz`, `Rx`, `Ry`, `U1`, `U2`, `U3`, `Phase`, `CRx`, `CRy`, `CRz`, `CU1`, etc.), angle arguments (float, in half-turns) come **first**, then qubit index(es). Example: `qc.Rz(0.5, 0)`. For `TK1`: three angles then qubit: `qc.TK1(0.1, 0.2, 0.3, 0)`. For `TK2`: two angles then two qubits: `qc.TK2(0.1, 0.2, 0, 1)`.  
 - **Measurement:** The measurement operation is `Measure`. Syntax: `qc.Measure(qubit, bit)`.
 
 #### Helper Functions (Modular Logic)

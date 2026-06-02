@@ -127,6 +127,20 @@ Then run the desired script inside the container:
 ./scripts/Complete_run_pytket.sh
 ```
 
+## Coverage HTML Reports
+
+Each run saves per-program `.coverage` data files under `<run_dir>/coverage_artifacts/`. At the end of a run these are combined into a single `<run_dir>/coverage_artifacts/.coverage` file and a `coverage_summary.json` is written alongside it.
+
+You can generate a line-level HTML heatmap (file list + per-file hit/miss annotations) from any completed run retroactively with the standard `coverage html` command:
+
+```bash
+# Inside the container, from the repo root
+COVERAGE_FILE=local_saved_circuits/<run_name>/coverage_artifacts/.coverage \
+  python -m coverage html -d local_saved_circuits/<run_name>/coverage_artifacts/htmlcov
+```
+
+Then open `local_saved_circuits/<run_name>/coverage_artifacts/htmlcov/index.html` in a browser. Each file shows green (hit) and red (missed) line annotations. The `generate_coverage_report_from_data_file` helper in `src/utils/execution.py` wraps this call and also supports `report_format="xml"` and `report_format="lcov"` for other tooling.
+
 # Bugs found
 
 | Issue | Language | Status | Notes |
