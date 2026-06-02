@@ -577,8 +577,8 @@ def _execute_python_code(
             # Execute
             cmd = [
                 "/usr/bin/time", "-v", "-o", metrics_file, 
-                sys.executable, "-m", "coverage", "run", 
-                "--branch", f"--source={coverage_source}", 
+                sys.executable, "-m", "coverage", "run",
+                f"--source={coverage_source}",
                 temp_file_path
             ]
             
