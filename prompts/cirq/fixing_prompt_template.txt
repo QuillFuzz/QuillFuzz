@@ -33,4 +33,4 @@ Fix Strategy:
         - Keep the circuit architecture as close to the original as possible.
     Complexity: Do not simplify the circuit logic unless strictly necessary to resolve the error.
 
-Task: Return the fully corrected, raw Python code now.
+Task: Return the fully corrected, raw Cirq code now.

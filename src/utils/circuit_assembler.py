@@ -844,12 +844,19 @@ def main():
 
         try:
             if isinstance(candidate, cirq.Circuit):
-                assembled += candidate
+                circuit_to_add = candidate
             else:
-                assembled += cirq.Circuit(candidate)
+                circuit_to_add = cirq.Circuit(candidate)
+            # Remove any measurements from the candidate to avoid key conflicts
+            ops_no_measure = [op for op in circuit_to_add.all_operations() if not isinstance(op.gate, cirq.MeasurementGate)]
+            clean_circuit = cirq.Circuit(ops_no_measure)
+            assembled += clean_circuit
         except Exception:
             continue
 
+    # Add a single consolidated measurement at the end
+    if assembled.all_qubits():
+        assembled.append(cirq.measure(*sorted(assembled.all_qubits()), key='result'))
     return assembled
 """
     new_module.body.append(ast.parse(master_main_src).body[0])

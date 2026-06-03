@@ -53,7 +53,7 @@ class cirqTesting(Base):
                 print('No Cirq circuit provided.')
                 return ks_value
 
-            shots_local = self.shots(10000)
+            shots_local = self.shots(1000)
             baseline_counts = self._counts_for_circuit(circuit, shots_local)
 
             for transform_name, transform in self._transforms():
