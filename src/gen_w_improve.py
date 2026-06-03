@@ -270,7 +270,6 @@ def main():
             coverage_artifacts_dir,
             run_start_epoch=run_start_epoch,
             run_end_epoch=run_end_epoch,
-            interval_seconds=3600,
         )
         if hourly_points:
             coverage_hourly_points = hourly_points

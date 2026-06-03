@@ -62,6 +62,7 @@ def process_single_file(
     compile_only: bool,
     ks_low_threshold: float,
     file_index: int,
+    coverage_artifact_dir: str = None,
 ) -> FileResult:
     filename = os.path.basename(file_path)
 
@@ -109,6 +110,7 @@ def process_single_file(
         source_file_path=file_path,
         circuit_id=file_index,
         ks_low_threshold=ks_low_threshold,
+        coverage_artifact_dir=coverage_artifact_dir,
     )
     execution_metrics = execution_metrics or {}
     low_ks_test_levels = populate_ks_test_metrics(execution_metrics, run_stdout, ks_low_threshold)

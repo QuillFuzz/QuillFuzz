@@ -213,14 +213,10 @@ def load_compact_coverage_summary(json_report_file: str) -> Dict[str, Any]:
 def format_hourly_coverage_points(hourly_points: List[Dict[str, Any]]) -> List[str]:
     lines: List[str] = []
     for point in hourly_points:
-        hour = point.get("hour", 0)
+        label = point.get("label") or f"Hour {point.get('hour', '?')}"
         percent = float(point.get("percent_covered", 0.0) or 0.0)
         covered = int(point.get("covered_lines", 0) or 0)
         total = int(point.get("num_statements", 0) or 0)
-        if hour == "end":
-            label = "Run End"
-        else:
-            label = f"Hour {int(hour)}"
         lines.append(f"{label}: {percent:.2f}% coverage ({covered} covered lines / {total} executable lines)")
     return lines
 
@@ -246,11 +242,42 @@ def _is_no_coverage_data_error(message: str) -> bool:
     return any(marker.lower() in lowered for marker in _NO_COVERAGE_DATA_MARKERS)
 
 
+def _build_coverage_checkpoints(run_duration_seconds: float) -> List[Tuple[float, str]]:
+    """Return (cutoff_seconds_from_start, label) for each checkpoint.
+
+    Schedule:
+      - Every 60 s for the first 10 minutes
+      - Every 600 s from 10–60 minutes
+      - Every 3600 s (hourly) thereafter
+    """
+    checkpoints: List[Tuple[float, str]] = []
+    # 1-minute marks: 60, 120, …, 600
+    for m in range(1, 11):
+        t = m * 60.0
+        if t > run_duration_seconds:
+            break
+        checkpoints.append((t, f"{m} min"))
+    # 10-minute marks: 20, 30, 40, 50, 60 min (skip 10 min, already covered)
+    for step in range(2, 7):
+        t = step * 600.0
+        if t > run_duration_seconds:
+            break
+        checkpoints.append((t, f"{step * 10} min"))
+    # Hourly marks from hour 2 onwards (hour 1 = 60 min already covered)
+    hour = 2
+    while True:
+        t = hour * 3600.0
+        if t > run_duration_seconds:
+            break
+        checkpoints.append((t, f"Hour {hour}"))
+        hour += 1
+    return checkpoints
+
+
 def build_hourly_coverage_timeline(
     artifact_dir: str,
     run_start_epoch: float,
     run_end_epoch: Optional[float] = None,
-    interval_seconds: int = 3600,
     python_executable: str = sys.executable,
 ) -> Tuple[List[Dict[str, Any]], str]:
     if not artifact_dir:
@@ -273,8 +300,11 @@ def build_hourly_coverage_timeline(
     if run_end_epoch is None:
         run_end_epoch = raw_files[-1][1]
 
-    timeline_end = max(float(run_end_epoch), float(run_start_epoch))
-    max_hour = int((timeline_end - float(run_start_epoch)) // float(interval_seconds))
+    run_start = float(run_start_epoch)
+    timeline_end = max(float(run_end_epoch), run_start)
+    run_duration = timeline_end - run_start
+
+    checkpoints = _build_coverage_checkpoints(run_duration)
 
     combined_data_file = os.path.join(artifact_dir, ".coverage.timeline")
     _safe_remove(combined_data_file)
@@ -286,11 +316,8 @@ def build_hourly_coverage_timeline(
     consumed = 0
     total_files = len(raw_files)
 
-    for hour in range(max_hour + 1):
-        # Hour `h` covers the interval [start, start + (h + 1) * interval): a
-        # cumulative bucket of every artifact produced up to the end of that
-        # hour. A sub-hour run therefore folds all of its artifacts into hour 0.
-        cutoff = float(run_start_epoch) + ((hour + 1) * float(interval_seconds))
+    for bucket_idx, (offset_seconds, label) in enumerate(checkpoints):
+        cutoff = run_start + offset_seconds
         new_files: List[str] = []
         while consumed < total_files and raw_files[consumed][1] <= cutoff:
             new_files.append(raw_files[consumed][0])
@@ -326,7 +353,7 @@ def build_hourly_coverage_timeline(
                 message = combine_result.stderr.strip() if combine_result.stderr else "coverage timeline combine failed"
                 return points, message
 
-            timeline_json = os.path.join(artifact_dir, f"coverage_timeline_hour_{hour}.json")
+            timeline_json = os.path.join(artifact_dir, f"coverage_timeline_{bucket_idx}.json")
             _, report_error = generate_coverage_report_from_data_file(
                 combined_data_file,
                 report_format="json",
@@ -338,7 +365,7 @@ def build_hourly_coverage_timeline(
 
             # When the bucket has measured data, refresh the running total. A
             # benign "no data yet" error leaves last_compact untouched so this
-            # hour is simply skipped instead of killing the whole timeline.
+            # bucket is simply skipped instead of killing the whole timeline.
             if not report_error:
                 last_compact = load_compact_coverage_summary(timeline_json)
             _safe_remove(timeline_json)
@@ -347,7 +374,8 @@ def build_hourly_coverage_timeline(
             continue
 
         point = {
-            "hour": hour,
+            "label": label,
+            "elapsed_seconds": offset_seconds,
             **last_compact,
         }
         points.append(point)
@@ -405,7 +433,7 @@ def build_hourly_coverage_timeline(
     if final_compact or points:
         points.append(
             {
-                "hour": "end",
+                "label": "Run End",
                 "elapsed_seconds": max(0.0, float(run_end_epoch) - float(run_start_epoch)),
                 **final_compact,
             }

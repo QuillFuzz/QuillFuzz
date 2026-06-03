@@ -23,6 +23,7 @@ from utils.execution_pipeline import (
     list_python_files,
     process_single_file,
 )
+from utils.execution import build_hourly_coverage_timeline, format_hourly_coverage_points
 from utils.utils import generate_complexity_scatter_plots
 from utils.reporting import Logger, StreamingMetricsCsvWriter, ensure_clean_file
 
@@ -41,6 +42,13 @@ def main():
         type=float,
         default=0.01,
         help="Threshold below which KS-test p-values are flagged as low in report/log outputs.",
+    )
+    parser.add_argument(
+        "--coverage-artifacts-dir",
+        type=str,
+        default=None,
+        help="Directory to save per-file .coverage artifacts for timeline generation. "
+             "If omitted, no coverage timeline is produced.",
     )
     args = parser.parse_args()
 
@@ -62,6 +70,10 @@ def main():
         os.environ["QUILLFUZZ_RUN_DIR"] = input_dir
 
     os.environ["QUILLFUZZ_DEBUG"] = "1" if args.debug else "0"
+
+    coverage_artifacts_dir = os.path.abspath(args.coverage_artifacts_dir) if args.coverage_artifacts_dir else None
+    if coverage_artifacts_dir:
+        os.makedirs(coverage_artifacts_dir, exist_ok=True)
 
     output_dir = os.path.abspath(args.output_dir) if args.output_dir else input_dir
     os.makedirs(output_dir, exist_ok=True)
@@ -110,6 +122,7 @@ def main():
                 args.compile_only,
                 args.ks_low_threshold,
                 index,
+                coverage_artifacts_dir,
             ): file_path
             for index, file_path in enumerate(files)
         }
@@ -132,9 +145,26 @@ def main():
                 results.append(failed_result)
                 metrics_csv_writer.append_row(build_metrics_csv_row(model_name, failed_result, args.compile_only))
 
-    duration = time.time() - start_time
+    end_time = time.time()
+    duration = end_time - start_time
+
+    coverage_timeline_points = []
+    if coverage_artifacts_dir:
+        timeline_points, timeline_error = build_hourly_coverage_timeline(
+            coverage_artifacts_dir,
+            run_start_epoch=start_time,
+            run_end_epoch=end_time,
+        )
+        if timeline_points:
+            coverage_timeline_points = timeline_points
+            logger.log("Coverage Timeline:")
+            for line in format_hourly_coverage_points(timeline_points):
+                logger.log(f"  {line}")
+        elif timeline_error:
+            logger.log(f"Coverage timeline error: {timeline_error}")
 
     summary = build_summary(model_name, results, args.compile_only, duration, args.ks_low_threshold)
+    summary["coverage_timeline_points"] = coverage_timeline_points
     with open(summary_json_path, "w", encoding="utf-8") as summary_file:
         json.dump(summary, summary_file, indent=2)
 
@@ -158,6 +188,11 @@ def main():
         print(f"Complexity plots: {plots_dir}")
     else:
         print("Complexity plots: skipped (no metrics available)")
+    if coverage_artifacts_dir:
+        if coverage_timeline_points:
+            print(f"Coverage timeline: {len(coverage_timeline_points)} points (see summary JSON)")
+        else:
+            print("Coverage timeline: no data collected")
 
 
 if __name__ == "__main__":
