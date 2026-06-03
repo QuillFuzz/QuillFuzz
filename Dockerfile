@@ -1,5 +1,7 @@
-# Use Ubuntu 24.04 (Noble) as base image to provide newer glibc (>=2.38) required by tket
 FROM ubuntu:24.04
+
+# Install UV
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Avoid interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -33,55 +35,39 @@ RUN apt-get update && apt-get install -y \
     time \
     && rm -rf /var/lib/apt/lists/*
 
-# Create and activate a virtual environment
-RUN python3 -m venv /opt/venv
-ENV VIRTUAL_ENV=/opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
+
 ENV LLVM_SYS_140_PREFIX=/usr/lib/llvm-14
 ENV PATH="/usr/lib/llvm-14/bin:${PATH}"
-
-# Install uv
-RUN pip install uv
 
 # Set up working directory
 WORKDIR /QuillFuzz
 
-# Copy project files
+# Create venv with uv
+RUN uv venv /opt/venv
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install build helpers and Conan (Required for tket C++ dependencies)
+RUN uv pip install wheel maturin hatchling "conan>=2.0.0,<3"
+RUN conan profile detect
+
+# Explicitly add the Quantinuum Conan remote
+RUN conan remote add tket https://quantinuumsw.jfrog.io/artifactory/api/conan/tket1-libs
+
+# Smart Wrapper: Force Conan to build missing binaries ONLY on 'install' commands
+RUN mv /opt/venv/bin/conan /opt/venv/bin/conan-real && \
+    echo '#!/bin/bash\nif [[ "$1" == "install" ]]; then\n    /opt/venv/bin/conan-real "$@" --build=missing\nelse\n    /opt/venv/bin/conan-real "$@"\nfi' > /opt/venv/bin/conan && \
+    chmod +x /opt/venv/bin/conan
+
 COPY pyproject.toml .
 
-# --- Install Main Project Dependencies ---
+RUN uv pip install --no-build-isolation -r pyproject.toml
+
 WORKDIR /QuillFuzz
 
-# Install build helpers
-RUN uv pip install wheel maturin
-
-# Install dependencies
-# Note:
-# - We use --no-build-isolation to use the system installed tools/headers
-RUN uv pip install --no-build-isolation \
-    pytket\
-    qiskit \
-    pennylane \
-    pytket-qiskit \
-    matplotlib \
-    sympy \
-    z3-solver \
-    cirq \
-    tket2 \
-    pytket-qir \
-    qnexus \
-    tket \
-    selene-sim==0.2.12 \
-    guppylang==0.21.11 \
-    litellm \
-    botocore \
-    boto3 \
-    coverage
-
-# Copy the rest of the application code
 COPY . /QuillFuzz
 
 # Final cleanups

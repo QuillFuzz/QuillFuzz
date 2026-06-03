@@ -1,14 +1,29 @@
 [build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "quillfuzz"
 version = "0.1.0"
-description = "Add your description here"
+description = "Quantum compiler fuzzer"
 readme = "README.md"
-requires-python = ">=3.11"
-dependencies = []
-
-[tool.setuptools.packages.find]
-where = ["src"]
+requires-python = ">=3.10"
+dependencies = [
+    "pytket",
+    "qiskit",
+    "pennylane",
+    "pytket-qiskit",
+    "matplotlib",
+    "sympy",
+    "z3-solver",
+    "cirq",
+    "pytket-qir",
+    "qnexus",
+    "tket",
+    "selene-sim==0.2.12",
+    "guppylang==0.21.11",
+    "litellm",
+    "botocore",
+    "boto3",
+    "coverage"
+]

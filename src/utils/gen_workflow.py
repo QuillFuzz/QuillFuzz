@@ -828,12 +828,14 @@ def assemble_circuits(model, files, args, base_dir, logger=None):
 
     def _run_assembled_candidate(path, code, cid):
         try:
+            coverage_artifact_dir = getattr(args, 'coverage_artifacts_dir', None)
             return run_generated_program(
                 code,
                 language=args.language,
                 source_file_path=path,
                 circuit_id=cid,
                 ks_low_threshold=args.ks_low_threshold,
+                coverage_artifact_dir=coverage_artifact_dir,
             )
         except Exception as e:
             return str(e), "", {}, ""

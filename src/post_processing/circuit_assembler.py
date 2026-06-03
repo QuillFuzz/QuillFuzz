@@ -6,6 +6,8 @@ import sys
 import time
 from typing import List
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from utils.gen_workflow import assemble_circuits
 from utils.interactive_stop import GracefulStopController
 from utils.reporting import Logger
@@ -81,9 +83,14 @@ def main() -> int:
         args = parser.parse_args()
 
         # Setup logfile path
-        base_dir = os.path.join(args.output_dir)
+        base_dir = os.path.abspath(args.output_dir)
+        os.environ["QUILLFUZZ_RUN_DIR"] = base_dir # Environment variable for test harnesses to find the run directory and logs
+
         coverage_artifacts_dir = os.path.join(base_dir, "coverage_artifacts")
-        logfile_path = os.path.join(base_dir, "execution.log")
+        os.makedirs(coverage_artifacts_dir, exist_ok=True)
+        os.environ["QUILLFUZZ_COVERAGE_ARTIFACT_DIR"] = coverage_artifacts_dir
+        args.coverage_artifacts_dir = coverage_artifacts_dir
+        logfile_path = os.path.join(base_dir, "assembly_execution.log")
 
         # Setup logger and stop controller
         logger = Logger(logfile_path)
@@ -103,7 +110,7 @@ def main() -> int:
 
         # Execute assembly
         assembled_files, assembled_metrics, assembled_reports = assemble_circuits(
-            "", circuits, args, os.path.dirname(args.input_dir), logger
+            "", circuits, args, base_dir, logger
         )
 
         run_end_epoch = time.time()
@@ -119,14 +126,13 @@ def main() -> int:
 
         # Generate scatter plots
         if assembled_metrics:
-            plots_dir = os.path.join(base_dir, "_assembled_complexity_plots")
+            plots_dir = os.path.join(base_dir, "assembly_complexity_plots")
             generate_complexity_scatter_plots(
                 assembled_metrics,
                 plots_dir,
             )
             logger.log(f"Generated complexity scatter plots at {plots_dir}")
 
-        # Process coverage artifacts
         combined_coverage_file = None
         coverage_summary_path = None
         coverage_summary_compact = {}
@@ -189,7 +195,7 @@ def main() -> int:
             json.dump(summary, f, indent=2)
         logger.log(f"Generated assembly summary JSON: {summary_path}")
 
-        print(f"\nAssembly complete. Kept: {kept_count}, Discarded: {discarded_count}")
+        print(f"\nAssembly complete.")
         print(f"Log: {logfile_path}")
         print(f"Summary: {summary_path}")
         return 0 if len(assembled_metrics) > 0 else 1
