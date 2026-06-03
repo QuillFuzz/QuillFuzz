@@ -1,168 +1,201 @@
 import argparse
 import glob
-import logging
-import math
+import json
 import os
-import random
 import sys
-from tqdm import tqdm
+import time
+from typing import List
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+from utils.gen_workflow import assemble_circuits
+from utils.interactive_stop import GracefulStopController
+from utils.reporting import Logger
+from utils.execution import (
+    combine_coverage_artifacts,
+    generate_coverage_report_from_data_file,
+    load_compact_coverage_summary,
+    build_hourly_coverage_timeline,
+    format_hourly_coverage_points,
+)
+from utils.utils import generate_complexity_scatter_plots
 
-if SCRIPT_DIR not in sys.path:
-    sys.path.insert(0, SCRIPT_DIR)
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
 
+def load_circuit_corpus(input_dir: str) -> List[str]:
+    """Load all .py circuit files from input directory"""
+    if not os.path.isdir(input_dir):
+        raise ValueError(f"Input directory not found: {input_dir}")
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Assemble and test quantum circuits.")
-    parser.add_argument("input_dir", help="Directory containing input circuit files")
+    circuits = sorted(glob.glob(os.path.join(input_dir, "*.py")))
+    if not circuits:
+        raise ValueError(f"No .py circuit files found in {input_dir}")
+
+    return circuits
+
+def main() -> int:
+
+    parser = argparse.ArgumentParser(
+        description="Standalone assembly executor: combine and test quantum circuits."
+    )
+    parser.add_argument("input_dir", help="Directory containing valid circuit files")
     parser.add_argument(
         "--output-dir",
         required=True,
-        help="Directory to save assembled circuits",
+        help="Output directory for assembled circuits, metrics, and logs",
     )
-    parser.add_argument("--n-generations", type=int, default=1, help="Number of circuits to generate")
-    parser.add_argument("--min-files", type=int, default=2, help="Minimum number of files per assembly")
-    parser.add_argument("--max-files", type=int, default=5, help="Maximum number of files per assembly")
     parser.add_argument(
         "--language",
         required=True,
         choices=["guppy", "qiskit", "cirq", "pytket", "pennylane"],
-        help="Language of circuits (guppy, qiskit, cirq, pytket, or pennylane)",
+        help="Circuit language",
     )
-    return parser.parse_args()
-
-
-def setup_logging(logfile_path: str) -> None:
-    for handler in logging.root.handlers[:]:
-        logging.root.removeHandler(handler)
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.FileHandler(logfile_path),
-            logging.StreamHandler(sys.stdout),
-        ],
+    parser.add_argument(
+        "--n_assemble",
+        type=int,
+        default=10,
+        help="Target number of assemblies to create (default: 10)",
     )
-
-
-def permutation_count(n_items: int, k_items: int) -> int:
-    if hasattr(math, "perm"):
-        return math.perm(n_items, k_items)
-    return math.factorial(n_items) // math.factorial(n_items - k_items)
-
-
-def max_unique_combinations(n_files: int, min_files: int, max_files: int) -> int:
-    return sum(permutation_count(n_files, k) for k in range(min_files, max_files + 1))
-
-
-def main() -> int:
-    args = parse_args()
-
-    from utils.circuit_assembler import assemble
-
-    if args.n_generations < 1:
-        print("--n-generations must be >= 1")
-        return 1
-
-    if args.min_files < 1:
-        print("--min-files must be >= 1")
-        return 1
-
-    if args.max_files < args.min_files:
-        print("--max-files must be >= --min-files")
-        return 1
-
-    os.makedirs(args.output_dir, exist_ok=True)
-    logfile_path = os.path.join(args.output_dir, "assembler.log")
-    setup_logging(logfile_path)
-
-    logging.info(
-        "Starting assembler with configurations: "
-        "Input=%s, Output=%s, N=%s, Language=%s",
-        args.input_dir,
-        args.output_dir,
-        args.n_generations,
-        args.language,
+    parser.add_argument(
+        "--n_circuits_per_assembly",
+        type=int,
+        default=3,
+        help="Max circuits per assembly (default: 3)",
     )
+    parser.add_argument(
+        "--max_workers",
+        type=int,
+        default=10,
+        help="Max parallel execution workers (default: 10)",
+    )
+    parser.add_argument(
+        "--ks_low_threshold",
+        type=float,
+        default=0.0001,
+        help="KS p-value threshold for flagging low results (default: 0.0001)",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Verbose logging including full code/error dumps",
+    )
+    try:
 
-    input_files = sorted(glob.glob(os.path.join(args.input_dir, "*.py")))
-    if not input_files:
-        msg = f"No input files found in {args.input_dir}"
-        logging.error(msg)
-        print(msg)
-        return 1
+        args = parser.parse_args()
 
-    effective_max_files = min(args.max_files, len(input_files))
-    if args.min_files > len(input_files):
-        msg = (
-            f"--min-files ({args.min_files}) is greater than available input files "
-            f"({len(input_files)})"
-        )
-        logging.error(msg)
-        print(msg)
-        return 1
+        # Setup logfile path
+        base_dir = os.path.join(args.output_dir)
+        coverage_artifacts_dir = os.path.join(base_dir, "coverage_artifacts")
+        logfile_path = os.path.join(base_dir, "execution.log")
 
-    max_possible = max_unique_combinations(len(input_files), args.min_files, effective_max_files)
-    target_generations = min(args.n_generations, max_possible)
-    if target_generations < args.n_generations:
-        logging.warning(
-            "Requested %s generations, but only %s unique ordered combinations are possible. "
-            "Capping generations to %s.",
-            args.n_generations,
-            max_possible,
-            target_generations,
+        # Setup logger and stop controller
+        logger = Logger(logfile_path)
+        stop_controller = GracefulStopController(enabled=True, logger=logger)
+        args.stop_controller = stop_controller
+        stop_controller.start()
+
+        logger.log(f"Assembly Executor started")
+        logger.log(f"Input dir: {args.input_dir}, Language: {args.language}")
+        logger.log(f"Output dir: {base_dir}")
+
+        # Load circuit corpus
+        circuits = load_circuit_corpus(args.input_dir)
+        logger.log(f"Loaded {len(circuits)} circuit files from {args.input_dir}")
+
+        run_start_epoch = time.time()
+
+        # Execute assembly
+        assembled_files, assembled_metrics, assembled_reports = assemble_circuits(
+            "", circuits, args, os.path.dirname(args.input_dir), logger
         )
 
-    logging.info("Found %s input files. Starting assembly...", len(input_files))
-    print(f"Found {len(input_files)} input files. Starting assembly...")
+        run_end_epoch = time.time()
 
-    seen_combinations = set()
-    generated_count = 0
-    failed_count = 0
-    attempts_without_progress = 0
-    max_attempts_without_progress = max(1000, target_generations * 25)
+        # Log summary
+        kept_count = len([m for m in assembled_metrics if m.get("success") or any(m.get("metrics", {}).get("execution", {}).values())])
+        discarded_count = len(assembled_metrics) - kept_count
+        logger.log(f"\n=== ASSEMBLY SUMMARY ===")
+        logger.log(f"Submitted: {len(assembled_metrics)}")
+        logger.log(f"Completed: {len(assembled_metrics)}")
+        logger.log(f"Kept (interesting): {kept_count}")
+        logger.log(f"Discarded (uninteresting): {discarded_count}")
 
-    with tqdm(total=target_generations, desc="Assembling") as pbar:
-        while generated_count < target_generations and attempts_without_progress < max_attempts_without_progress:
-            k = random.randint(args.min_files, effective_max_files)
-            selected_files = random.sample(input_files, k)
-            combo_key = tuple(selected_files)
+        # Generate scatter plots
+        if assembled_metrics:
+            plots_dir = os.path.join(base_dir, "_assembled_complexity_plots")
+            generate_complexity_scatter_plots(
+                assembled_metrics,
+                plots_dir,
+            )
+            logger.log(f"Generated complexity scatter plots at {plots_dir}")
 
-            if combo_key in seen_combinations:
-                attempts_without_progress += 1
-                continue
+        # Process coverage artifacts
+        combined_coverage_file = None
+        coverage_summary_path = None
+        coverage_summary_compact = {}
+        coverage_hourly_points = []
+        coverage_hourly_point_text = []
+        coverage_combine_error = ""
 
-            seen_combinations.add(combo_key)
-            output_file = os.path.join(args.output_dir, f"assembled_circuit_{generated_count}.py")
+        if os.path.isdir(coverage_artifacts_dir):
+            combined_coverage_file, coverage_combine_error = combine_coverage_artifacts(coverage_artifacts_dir)
+            if combined_coverage_file:
+                coverage_summary_path = os.path.join(coverage_artifacts_dir, "coverage_summary.json")
+                _, coverage_report_error = generate_coverage_report_from_data_file(
+                    combined_coverage_file,
+                    report_format="json",
+                    output_path=coverage_summary_path,
+                )
+                if coverage_report_error:
+                    coverage_combine_error = coverage_report_error
+                elif os.path.exists(coverage_summary_path):
+                    coverage_summary_compact = load_compact_coverage_summary(coverage_summary_path)
 
-            try:
-                assemble(selected_files, output_file, generated_count, language=args.language)
-                generated_count += 1
-                attempts_without_progress = 0
-                pbar.update(1)
-            except Exception as exc:
-                failed_count += 1
-                attempts_without_progress += 1
-                logging.error("Failed to assemble combination %s: %s", selected_files, exc)
+            hourly_points, hourly_error = build_hourly_coverage_timeline(
+                coverage_artifacts_dir,
+                run_start_epoch=run_start_epoch,
+                run_end_epoch=run_end_epoch,
+            )
+            if hourly_points:
+                coverage_hourly_points = hourly_points
+                coverage_hourly_point_text = format_hourly_coverage_points(hourly_points)
+            elif hourly_error and not coverage_combine_error:
+                coverage_combine_error = hourly_error
 
-    if generated_count < target_generations:
-        logging.warning(
-            "Stopped early after %s generations due to repeated duplicate or failed attempts.",
-            generated_count,
-        )
+        if coverage_hourly_point_text:
+            logger.log("Coverage Hourly Timeline:")
+            for line in coverage_hourly_point_text:
+                logger.log(f"  {line}")
 
-    logging.info(
-        "Assembly complete. Generated=%s, Failed=%s, Requested=%s",
-        generated_count,
-        failed_count,
-        args.n_generations,
-    )
-    return 0 if generated_count > 0 else 1
+        # Generate summary JSON
+        summary_path = os.path.join(base_dir, "assembly_summary.json")
+        summary = {
+            "language": args.language,
+            "input_dir": args.input_dir,
+            "output_dir": base_dir,
+            "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "circuits_loaded": len(circuits),
+            "assembled_submitted": len(assembled_metrics),
+            "assembled_completed": len(assembled_metrics),
+            "assembled_kept": kept_count,
+            "assembled_discarded": discarded_count,
+            "coverage_artifacts_dir": coverage_artifacts_dir,
+            "coverage_combined_data_file": combined_coverage_file,
+            "coverage_summary_path": coverage_summary_path,
+            "coverage_summary_compact": coverage_summary_compact,
+            "coverage_hourly_points": coverage_hourly_points,
+            "coverage_hourly_points_text": coverage_hourly_point_text,
+            "coverage_combine_error": coverage_combine_error,
+            "per_file_reports": assembled_reports,
+        }
+        with open(summary_path, "w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2)
+        logger.log(f"Generated assembly summary JSON: {summary_path}")
+
+        print(f"\nAssembly complete. Kept: {kept_count}, Discarded: {discarded_count}")
+        print(f"Log: {logfile_path}")
+        print(f"Summary: {summary_path}")
+        return 0 if len(assembled_metrics) > 0 else 1
+
+    finally:
+        stop_controller.close()
 
 
 if __name__ == "__main__":
