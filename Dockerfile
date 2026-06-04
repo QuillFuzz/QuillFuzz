@@ -1,7 +1,7 @@
 FROM ubuntu:24.04
 
-# Install UV
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# CORRECT: Copies UV without destroying the /bin symlink
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
 # Avoid interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -35,7 +35,7 @@ RUN apt-get update && apt-get install -y \
     time \
     && rm -rf /var/lib/apt/lists/*
 
-
+# Install Rust
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
