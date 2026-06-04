@@ -23,7 +23,15 @@ from utils.execution_pipeline import (
     list_python_files,
     process_single_file,
 )
-from utils.execution import build_hourly_coverage_timeline, format_hourly_coverage_points
+from utils.execution import (
+    build_hourly_coverage_timeline,
+    format_hourly_coverage_points,
+    combine_coverage_artifacts,
+    generate_coverage_report_from_data_file,
+    load_compact_coverage_summary,
+)
+from utils.gen_workflow import assemble_circuits
+from utils.interactive_stop import GracefulStopController
 from utils.utils import generate_complexity_scatter_plots
 from utils.reporting import Logger, StreamingMetricsCsvWriter, ensure_clean_file
 
@@ -50,6 +58,35 @@ def main():
         help="Directory to save per-file .coverage artifacts for timeline generation. "
              "If omitted, no coverage timeline is produced.",
     )
+    parser.add_argument(
+        "--assemble",
+        action="store_true",
+        help="Enable the assembly stage after running existing tests.",
+    )
+    parser.add_argument(
+        "--n-assemble",
+        "--n_assemble",
+        type=int,
+        default=10,
+        dest="n_assemble",
+        help="Target number of assemblies to create (default: 10)",
+    )
+    parser.add_argument(
+        "--n-circuits-per-assembly",
+        "--n_circuits_per_assembly",
+        type=int,
+        default=3,
+        dest="n_circuits_per_assembly",
+        help="Max circuits per assembly (default: 3)",
+    )
+    parser.add_argument(
+        "--max-workers",
+        "--max_workers",
+        type=int,
+        default=None,
+        dest="max_workers",
+        help="Max parallel execution workers for assembly (defaults to value of --workers)",
+    )
     args = parser.parse_args()
 
     input_dir = os.path.abspath(args.input_dir)
@@ -71,12 +108,27 @@ def main():
 
     os.environ["QUILLFUZZ_DEBUG"] = "1" if args.debug else "0"
 
-    coverage_artifacts_dir = os.path.abspath(args.coverage_artifacts_dir) if args.coverage_artifacts_dir else None
-    if coverage_artifacts_dir:
-        os.makedirs(coverage_artifacts_dir, exist_ok=True)
-
     output_dir = os.path.abspath(args.output_dir) if args.output_dir else input_dir
     os.makedirs(output_dir, exist_ok=True)
+
+    if args.max_workers is None:
+        args.max_workers = args.workers
+
+    if args.assemble:
+        if not args.language:
+            print("Error: --language must be specified when using --assemble.")
+            sys.exit(1)
+
+    coverage_artifacts_dir = None
+    if args.coverage_artifacts_dir:
+        coverage_artifacts_dir = os.path.abspath(args.coverage_artifacts_dir)
+    elif args.assemble:
+        coverage_artifacts_dir = os.path.join(output_dir, "coverage_artifacts")
+
+    if coverage_artifacts_dir:
+        os.makedirs(coverage_artifacts_dir, exist_ok=True)
+        os.environ["QUILLFUZZ_COVERAGE_ARTIFACT_DIR"] = coverage_artifacts_dir
+        args.coverage_artifacts_dir = coverage_artifacts_dir
 
     if args.output_log:
         log_path = os.path.abspath(args.output_log)
@@ -193,6 +245,125 @@ def main():
             print(f"Coverage timeline: {len(coverage_timeline_points)} points (see summary JSON)")
         else:
             print("Coverage timeline: no data collected")
+
+    if args.assemble:
+        print("\nStarting assembly phase...")
+        assembly_log_path = os.path.join(output_dir, "assembly_execution.log")
+        ensure_clean_file(assembly_log_path)
+        assembly_logger = Logger(assembly_log_path)
+
+        stop_controller = GracefulStopController(enabled=True, logger=assembly_logger)
+        args.stop_controller = stop_controller
+        stop_controller.start()
+
+        assembly_logger.log("Assembly Executor started")
+        assembly_logger.log(f"Input dir: {input_dir}, Language: {args.language}")
+        assembly_logger.log(f"Output dir: {output_dir}")
+        assembly_logger.log(f"Loaded {len(files)} circuit files from {input_dir}")
+
+        run_start_epoch = time.time()
+
+        try:
+            # Execute assembly
+            assembled_files, assembled_metrics, assembled_reports = assemble_circuits(
+                "", files, args, output_dir, assembly_logger
+            )
+
+            run_end_epoch = time.time()
+
+            # Log summary
+            kept_count = len([
+                m for m in assembled_metrics
+                if m.get("success") or any(m.get("metrics", {}).get("execution", {}).values())
+            ])
+            discarded_count = len(assembled_metrics) - kept_count
+            assembly_logger.log("\n=== ASSEMBLY SUMMARY ===")
+            assembly_logger.log(f"Submitted: {len(assembled_metrics)}")
+            assembly_logger.log(f"Completed: {len(assembled_metrics)}")
+            assembly_logger.log(f"Kept (interesting): {kept_count}")
+            assembly_logger.log(f"Discarded (uninteresting): {discarded_count}")
+
+            # Generate scatter plots
+            if assembled_metrics:
+                assembly_plots_dir = os.path.join(output_dir, "assembly_complexity_plots")
+                generate_complexity_scatter_plots(assembled_metrics, assembly_plots_dir)
+                assembly_logger.log(f"Generated complexity scatter plots at {assembly_plots_dir}")
+
+            combined_coverage_file = None
+            coverage_summary_path = None
+            coverage_summary_compact = {}
+            coverage_hourly_points = []
+            coverage_hourly_point_text = []
+            coverage_combine_error = ""
+
+            if coverage_artifacts_dir and os.path.isdir(coverage_artifacts_dir):
+                combined_file, combine_err = combine_coverage_artifacts(coverage_artifacts_dir)
+                if combined_file:
+                    combined_coverage_file = combined_file
+                    coverage_summary_path = os.path.join(coverage_artifacts_dir, "coverage_summary.json")
+                    _, report_error = generate_coverage_report_from_data_file(
+                        combined_coverage_file,
+                        report_format="json",
+                        output_path=coverage_summary_path,
+                    )
+                    if report_error:
+                        coverage_combine_error = report_error
+                    elif os.path.exists(coverage_summary_path):
+                        coverage_summary_compact = load_compact_coverage_summary(coverage_summary_path)
+                elif combine_err:
+                    coverage_combine_error = combine_err
+
+                hourly_points, hourly_error = build_hourly_coverage_timeline(
+                    coverage_artifacts_dir,
+                    run_start_epoch=run_start_epoch,
+                    run_end_epoch=run_end_epoch,
+                )
+                if hourly_points:
+                    coverage_hourly_points = hourly_points
+                    coverage_hourly_point_text = format_hourly_coverage_points(hourly_points)
+                elif hourly_error and not coverage_combine_error:
+                    coverage_combine_error = hourly_error
+
+            if coverage_hourly_point_text:
+                assembly_logger.log("Coverage Hourly Timeline:")
+                for line in coverage_hourly_point_text:
+                    assembly_logger.log(f"  {line}")
+
+            # Generate summary JSON
+            assembly_summary_path = os.path.join(output_dir, "assembly_summary.json")
+            assembly_summary = {
+                "language": args.language,
+                "input_dir": input_dir,
+                "output_dir": output_dir,
+                "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "circuits_loaded": len(files),
+                "assembled_submitted": len(assembled_metrics),
+                "assembled_completed": len(assembled_metrics),
+                "assembled_kept": kept_count,
+                "assembled_discarded": discarded_count,
+                "coverage_artifacts_dir": coverage_artifacts_dir,
+                "coverage_combined_data_file": combined_coverage_file,
+                "coverage_summary_path": coverage_summary_path,
+                "coverage_summary_compact": coverage_summary_compact,
+                "coverage_hourly_points": coverage_hourly_points,
+                "coverage_hourly_points_text": coverage_hourly_point_text,
+                "coverage_combine_error": coverage_combine_error,
+                "per_file_reports": assembled_reports,
+            }
+            with open(assembly_summary_path, "w", encoding="utf-8") as f:
+                json.dump(assembly_summary, f, indent=2)
+            assembly_logger.log(f"Generated assembly summary JSON: {assembly_summary_path}")
+
+            print(f"\nAssembly complete.")
+            print(f"Log: {assembly_log_path}")
+            print(f"Summary: {assembly_summary_path}")
+            if assembled_metrics:
+                print(f"Complexity plots: {os.path.join(output_dir, 'assembly_complexity_plots')}")
+            else:
+                print("Complexity plots: skipped (no metrics available)")
+
+        finally:
+            stop_controller.close()
 
 
 if __name__ == "__main__":
