@@ -39,7 +39,6 @@ def main():
     parser = argparse.ArgumentParser(description="Run tests on existing generated circuits without generating new ones.")
     parser.add_argument("input_dir", help="Directory containing .py files to test")
     parser.add_argument("--language", choices=["guppy", "qiskit", "cirq", "pytket", "pennylane"], help="Language of the files to test")
-    parser.add_argument("--workers", type=int, default=10, help="Number of concurrent workers")
     parser.add_argument("--verbose", action="store_true", help="Include wrapped code in the log output")
     parser.add_argument("--debug", action="store_true", help="Enable diff-testing debug mode and stage timing output")
     parser.add_argument("--output-log", help="Optional path for the execution log file")
@@ -48,7 +47,7 @@ def main():
     parser.add_argument(
         "--ks-low-threshold",
         type=float,
-        default=0.01,
+        default=0.0001,
         help="Threshold below which KS-test p-values are flagged as low in report/log outputs.",
     )
     parser.add_argument(
@@ -83,9 +82,9 @@ def main():
         "--max-workers",
         "--max_workers",
         type=int,
-        default=None,
+        default=10,
         dest="max_workers",
-        help="Max parallel execution workers for assembly (defaults to value of --workers)",
+        help="Max parallel execution workers",
     )
     args = parser.parse_args()
 
@@ -94,7 +93,6 @@ def main():
         print(f"Error: {input_dir} is not a directory.")
         sys.exit(1)
 
-    workers = max(1, args.workers)
     files = list_python_files(input_dir)
 
     if not files:
@@ -110,9 +108,6 @@ def main():
 
     output_dir = os.path.abspath(args.output_dir) if args.output_dir else input_dir
     os.makedirs(output_dir, exist_ok=True)
-
-    if args.max_workers is None:
-        args.max_workers = args.workers
 
     if args.assemble:
         if not args.language:
@@ -151,19 +146,19 @@ def main():
     logger.log(f"Language: {args.language}")
     logger.log(f"Compile only: {args.compile_only}")
     logger.log(f"Debug: {args.debug}")
-    logger.log(f"Workers: {workers}")
+    logger.log(f"Workers: {args.max_workers}")
     logger.log(f"Files discovered: {len(files)}")
 
     print(f"Found {len(files)} files in {input_dir}")
     print(f"Execution log: {log_path}")
-    print(f"Using {workers} workers")
+    print(f"Using {args.max_workers} workers")
     if args.debug:
         print("Debug mode enabled: diff-testing stages will print timing output")
 
     start_time = time.time()
     results: List[FileResult] = []
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_workers) as executor:
         futures = {
             executor.submit(
                 process_single_file,

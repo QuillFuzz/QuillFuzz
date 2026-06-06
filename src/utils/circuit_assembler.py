@@ -1,8 +1,6 @@
 import ast
 import logging
 
-import cirq
-
 from .ast_ops import is_qubit_guppy, get_array_size_guppy, CircuitRenamer, QiskitMainTransformer
 
 def _validate_qiskit_if_test_usage(tree):
@@ -771,6 +769,7 @@ def main():
 
 
 def assemble_cirq(files, output_path, unique_index=0):
+    import cirq
     all_imports = []
     renamed_bodies = []
     main_builders = []

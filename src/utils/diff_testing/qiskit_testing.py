@@ -1,5 +1,4 @@
-from pytket.circuit import Circuit
-from qiskit import transpile
+from qiskit import transpile, QuantumCircuit
 import traceback
 
 from .base import Base
@@ -9,13 +8,14 @@ class qiskitTesting(Base):
     def __init__(self):
         super().__init__()
 
-    def ks_diff_test(self, circuit: Circuit, circuit_number: int) -> float:
+    def ks_diff_test(self, circuit: QuantumCircuit, circuit_number: int) -> float:
         ks_value = 1.0
         try:
             from qiskit_aer import AerSimulator
             backend = AerSimulator()
 
             circuit.measure_all()
+
             shots = self.shots(10000)
             uncompiled_circ = transpile(circuit, backend, optimization_level=0)
             counts1 = self.preprocess_counts(backend.run(uncompiled_circ, shots=shots).result().get_counts())
