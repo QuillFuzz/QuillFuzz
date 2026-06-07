@@ -158,107 +158,142 @@ def main():
     start_time = time.time()
     results: List[FileResult] = []
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_workers) as executor:
-        futures = {
-            executor.submit(
-                process_single_file,
-                file_path,
-                logger,
-                args.verbose,
-                args.language,
-                args.compile_only,
-                args.ks_low_threshold,
-                index,
-                coverage_artifacts_dir,
-            ): file_path
-            for index, file_path in enumerate(files)
-        }
+    stop_controller = GracefulStopController(enabled=True, logger=logger)
+    args.stop_controller = stop_controller
+    stop_controller.start()
 
-        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), unit="files"):
-            try:
-                result = future.result()
-                results.append(result)
-                metrics_csv_writer.append_row(build_metrics_csv_row(model_name, result, args.compile_only))
-            except Exception as exc:
-                failed_path = futures[future]
-                logger.log(f"Unexpected error for {failed_path}: {exc}")
-                failed_result = FileResult(
-                    file_path=failed_path,
-                    success=False,
-                    error=str(exc),
-                    metrics={},
-                    low_ks_test_levels=[],
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_workers) as executor:
+            futures = {}
+            submitted = 0
+            completed = 0
+            total_files = len(files)
+            
+            pbar = tqdm(total=total_files, desc="Retest", unit="files")
+            
+            while completed < total_files:
+                while submitted < total_files and len(futures) < args.max_workers:
+                    if stop_controller.stop_requested:
+                        break
+                    file_path = files[submitted]
+                    future = executor.submit(
+                        process_single_file,
+                        file_path,
+                        logger,
+                        args.verbose,
+                        args.language,
+                        args.compile_only,
+                        args.ks_low_threshold,
+                        submitted,
+                        coverage_artifacts_dir,
+                    )
+                    futures[future] = file_path
+                    submitted += 1
+                    
+                if stop_controller.stop_requested and not futures:
+                    break
+                    
+                if not futures:
+                    break
+                    
+                done, _ = concurrent.futures.wait(
+                    list(futures.keys()),
+                    timeout=0.25,
+                    return_when=concurrent.futures.FIRST_COMPLETED,
                 )
-                results.append(failed_result)
-                metrics_csv_writer.append_row(build_metrics_csv_row(model_name, failed_result, args.compile_only))
+                
+                if not done:
+                    continue
+                    
+                for future in done:
+                    completed += 1
+                    pbar.update(1)
+                    failed_path = futures.pop(future)
+                    try:
+                        result = future.result()
+                        results.append(result)
+                        metrics_csv_writer.append_row(build_metrics_csv_row(model_name, result, args.compile_only))
+                    except Exception as exc:
+                        logger.log(f"Unexpected error for {failed_path}: {exc}")
+                        failed_result = FileResult(
+                            file_path=failed_path,
+                            success=False,
+                            error=str(exc),
+                            metrics={},
+                            low_ks_test_levels=[],
+                        )
+                        results.append(failed_result)
+                        metrics_csv_writer.append_row(build_metrics_csv_row(model_name, failed_result, args.compile_only))
+            
+            pbar.close()
 
-    end_time = time.time()
-    duration = end_time - start_time
+        if stop_controller.stop_requested:
+            logger.log(f"Retest run stopped early at {len(results)}/{total_files} files due to interactive stop request.")
 
-    coverage_timeline_points = []
-    if coverage_artifacts_dir:
-        timeline_points, timeline_error = build_hourly_coverage_timeline(
-            coverage_artifacts_dir,
-            run_start_epoch=start_time,
-            run_end_epoch=end_time,
-        )
-        if timeline_points:
-            coverage_timeline_points = timeline_points
-            logger.log("Coverage Timeline:")
-            for line in format_hourly_coverage_points(timeline_points):
-                logger.log(f"  {line}")
-        elif timeline_error:
-            logger.log(f"Coverage timeline error: {timeline_error}")
+        end_time = time.time()
+        duration = end_time - start_time
 
-    summary = build_summary(model_name, results, args.compile_only, duration, args.ks_low_threshold)
-    summary["coverage_timeline_points"] = coverage_timeline_points
-    with open(summary_json_path, "w", encoding="utf-8") as summary_file:
-        json.dump(summary, summary_file, indent=2)
+        coverage_timeline_points = []
+        if coverage_artifacts_dir:
+            timeline_points, timeline_error = build_hourly_coverage_timeline(
+                coverage_artifacts_dir,
+                run_start_epoch=start_time,
+                run_end_epoch=end_time,
+            )
+            if timeline_points:
+                coverage_timeline_points = timeline_points
+                logger.log("Coverage Timeline:")
+                for line in format_hourly_coverage_points(timeline_points):
+                    logger.log(f"  {line}")
+            elif timeline_error:
+                logger.log(f"Coverage timeline error: {timeline_error}")
 
-    all_metrics = [
-        {"model": model_name, "metrics": result.metrics}
-        for result in results
-        if result.metrics
-    ]
+        summary = build_summary(model_name, results, args.compile_only, duration, args.ks_low_threshold)
+        summary["coverage_timeline_points"] = coverage_timeline_points
+        with open(summary_json_path, "w", encoding="utf-8") as summary_file:
+            json.dump(summary, summary_file, indent=2)
 
-    if all_metrics:
-        os.makedirs(plots_dir, exist_ok=True)
-        generate_complexity_scatter_plots(all_metrics, plots_dir)
+        all_metrics = [
+            {"model": model_name, "metrics": result.metrics}
+            for result in results
+            if result.metrics
+        ]
 
-    logger.log(f"Metrics CSV rows written: {metrics_csv_writer.row_count()}")
-    logger.log(f"Metrics CSV path: {metrics_csv_path}")
+        if all_metrics:
+            os.makedirs(plots_dir, exist_ok=True)
+            generate_complexity_scatter_plots(all_metrics, plots_dir)
 
-    print(f"Finished. {summary['successful_files']}/{summary['total_files']} passed.")
-    print(f"Summary JSON: {summary_json_path}")
-    print(f"Execution metrics CSV: {metrics_csv_path}")
-    if all_metrics:
-        print(f"Complexity plots: {plots_dir}")
-    else:
-        print("Complexity plots: skipped (no metrics available)")
-    if coverage_artifacts_dir:
-        if coverage_timeline_points:
-            print(f"Coverage timeline: {len(coverage_timeline_points)} points (see summary JSON)")
+        logger.log(f"Metrics CSV rows written: {metrics_csv_writer.row_count()}")
+        logger.log(f"Metrics CSV path: {metrics_csv_path}")
+
+        print(f"Finished. {summary['successful_files']}/{summary['total_files']} passed.")
+        print(f"Summary JSON: {summary_json_path}")
+        print(f"Execution metrics CSV: {metrics_csv_path}")
+        if all_metrics:
+            print(f"Complexity plots: {plots_dir}")
         else:
-            print("Coverage timeline: no data collected")
+            print("Complexity plots: skipped (no metrics available)")
+        if coverage_artifacts_dir:
+            if coverage_timeline_points:
+                print(f"Coverage timeline: {len(coverage_timeline_points)} points (see summary JSON)")
+            else:
+                print("Coverage timeline: no data collected")
 
-    if args.assemble:
-        print("\nStarting assembly phase...")
-        assembly_log_path = os.path.join(output_dir, "assembly_execution.log")
-        ensure_clean_file(assembly_log_path)
-        assembly_logger = Logger(assembly_log_path)
+        if args.assemble and not stop_controller.stop_requested:
+            print("\nStarting assembly phase...")
+            assembly_log_path = os.path.join(output_dir, "assembly_execution.log")
+            ensure_clean_file(assembly_log_path)
+            assembly_logger = Logger(assembly_log_path)
 
-        stop_controller = GracefulStopController(enabled=True, logger=assembly_logger)
-        args.stop_controller = stop_controller
-        stop_controller.start()
+            stop_controller.logger = assembly_logger
 
-        assembly_logger.log("Assembly Executor started")
-        assembly_logger.log(f"Input dir: {input_dir}, Language: {args.language}")
-        assembly_logger.log(f"Output dir: {output_dir}")
-        assembly_logger.log(f"Loaded {len(files)} circuit files from {input_dir}")
+            assembly_logger.log("Assembly Executor started")
+            assembly_logger.log(f"Input dir: {input_dir}, Language: {args.language}")
+            assembly_logger.log(f"Output dir: {output_dir}")
+            assembly_logger.log(f"Loaded {len(files)} circuit files from {input_dir}")
 
-        run_start_epoch = time.time()
+            run_start_epoch = time.time()
 
-        try:
             # Execute assembly
             assembled_files, assembled_metrics, assembled_reports = assemble_circuits(
                 "", files, args, output_dir, assembly_logger
@@ -356,9 +391,11 @@ def main():
                 print(f"Complexity plots: {os.path.join(output_dir, 'assembly_complexity_plots')}")
             else:
                 print("Complexity plots: skipped (no metrics available)")
+        elif args.assemble and stop_controller.stop_requested:
+            print("\nSkipping assembly phase due to interactive stop request.")
 
-        finally:
-            stop_controller.close()
+    finally:
+        stop_controller.close()
 
 
 if __name__ == "__main__":
