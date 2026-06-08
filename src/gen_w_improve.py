@@ -52,6 +52,7 @@ def main():
     parser.add_argument("--improve_prompt", action="store_true", default=False, help="Enable prompt improvement stage")
     parser.add_argument("--max_rounds", type=int, default=3, help="Maximum number of prompt-improvement rounds during training")
     parser.add_argument("--debug", action="store_true", default=False, help="Enable debug mode (reduces diff_testing shots)")
+    parser.add_argument("--simple_mode", action="store_true", default=False, help="Enable simple mode to use simple generation, fixing, and mutation prompts.")
     parser.add_argument(
         "--ks_low_threshold",
         type=float,
@@ -87,7 +88,10 @@ def main():
 
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if not args.prompt_dir:
-        args.prompt_dir = os.path.join(project_root, "prompts", args.language)
+        if args.simple_mode:
+            args.prompt_dir = os.path.join(project_root, "prompts", f"{args.language}_simple")
+        else:
+            args.prompt_dir = os.path.join(project_root, "prompts", args.language)
     run_id = args.run_name or time.strftime("%Y%m%d_%H%M%S")
     if not args.output_dir:
         args.output_dir = os.path.join(project_root, "local_saved_circuits", run_id)

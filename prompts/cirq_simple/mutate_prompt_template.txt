@@ -1,0 +1,3 @@
+Please mutate the following Cirq program to be slightly different while remaining valid.
+
+Code: {{input_code}}
