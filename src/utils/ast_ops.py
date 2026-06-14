@@ -192,17 +192,18 @@ def wrap_for_compilation_guppy(code: str) -> str:
     wrapper_name, wrapper_code = _generate_guppy_wrapper_body(code)
     if wrapper_name is None: return code
     
+    import_stmt = "import guppylang_internals\n"
     if wrapper_code:
-        return code + wrapper_code + f"\n{wrapper_name}.compile()\n"
+        return import_stmt + code + wrapper_code + f"\n{wrapper_name}.compile()\n"
     else:
         # If no wrapper needed (e.g. main has no args), just compile main
-        return code + f"\n{wrapper_name}.compile()\n"
+        return import_stmt + code + f"\n{wrapper_name}.compile()\n"
 
 def wrap_for_testing_guppy(code: str, circuit_id: int = 0) -> str:
     wrapper_name, wrapper_code = _generate_guppy_wrapper_body(code)
     if wrapper_name is None: return code
     
-    import_stmt = "from src.utils.diff_testing import guppyTesting\n"
+    import_stmt = "import guppylang_internals\nfrom src.utils.diff_testing import guppyTesting\n"
     
     # Need to verify if imports already exist in code to avoid dupes? 
     # Python doesn't crash on duplicate imports, so prepending is fine.
@@ -241,8 +242,9 @@ def wrap_for_compilation_qiskit(code: str) -> str:
     if has_main_block:
         return code
 
+    import_stmt = "import qiskit\n"
     wrapper_code =  "\nif __name__ == '__main__':\n\t main()\n"
-    return code + wrapper_code
+    return import_stmt + code + wrapper_code
 
 def wrap_for_testing_qiskit(code: str, circuit_id: int = 0) -> str:
     # Basic check for main
@@ -256,7 +258,7 @@ def wrap_for_testing_qiskit(code: str, circuit_id: int = 0) -> str:
         if not has_main: return code
     except: return code
 
-    import_stmt = "from src.utils.diff_testing import qiskitTesting\n"
+    import_stmt = "import qiskit\nfrom src.utils.diff_testing import qiskitTesting\n"
     
     # We want to replace existing main block or append new one
     # For simplicity, we just append. If there's an existing `if __name__ == "__main__": main()`,
@@ -292,8 +294,9 @@ def wrap_for_compilation_cirq(code: str) -> str:
     if has_main_block:
         return code
 
+    import_stmt = "import cirq\n"
     wrapper_code = "\nif __name__ == '__main__':\n\t main()\n"
-    return code + wrapper_code
+    return import_stmt + code + wrapper_code
 
 
 def wrap_for_testing_cirq(code: str, circuit_id: int = 0) -> str:
@@ -305,7 +308,7 @@ def wrap_for_testing_cirq(code: str, circuit_id: int = 0) -> str:
     except SyntaxError:
         return code
 
-    import_stmt = "from src.utils.diff_testing import cirqTesting\n"
+    import_stmt = "import cirq\nfrom src.utils.diff_testing import cirqTesting\n"
     wrapper_code = f"""
 if __name__ == '__main__':
     ct = cirqTesting()
@@ -334,8 +337,9 @@ def wrap_for_compilation_pennylane(code: str) -> str:
     if has_main_block:
         return code
 
+    import_stmt = "import pennylane\n"
     wrapper_code = "\nif __name__ == '__main__':\n\t main()\n"
-    return code + wrapper_code
+    return import_stmt + code + wrapper_code
 
 
 def wrap_for_testing_pennylane(code: str, circuit_id: int = 0) -> str:
@@ -347,7 +351,7 @@ def wrap_for_testing_pennylane(code: str, circuit_id: int = 0) -> str:
     except SyntaxError:
         return code
 
-    import_stmt = "from src.utils.diff_testing import pennylaneTesting\n"
+    import_stmt = "import pennylane\nfrom src.utils.diff_testing import pennylaneTesting\n"
     wrapper_code = f"""
 if __name__ == '__main__':
     pt = pennylaneTesting()
@@ -388,8 +392,12 @@ def wrap_for_compilation_pytket(code: str) -> str:
     if "import tket" in code or "from tket" in code:
         tket_import = ""
 
+    pytket_import = "import pytket\n"
+    if "import pytket" in code or "from pytket" in code:
+        pytket_import = ""
+
     wrapper_code =  "\nif __name__ == '__main__':\n\t main()\n"
-    return tket_import + code + wrapper_code
+    return pytket_import + tket_import + code + wrapper_code
 
 
 def wrap_for_testing_pytket(
@@ -413,6 +421,10 @@ def wrap_for_testing_pytket(
     if "import tket" in code or "from tket" in code:
         tket_import = ""
 
+    pytket_import = "import pytket\n"
+    if "import pytket" in code or "from pytket" in code:
+        pytket_import = ""
+
     import_stmt = "from src.utils.diff_testing import pytketTesting\n"
 
     method_name = "ks_diff_test_tket2" if use_tket2 else "ks_diff_test"
@@ -422,7 +434,7 @@ if __name__ == '__main__':
     pt = pytketTesting()
     pt.{method_name}(main(), {circuit_id})
 """
-    return tket_import + import_stmt + code + wrapper_code
+    return pytket_import + tket_import + import_stmt + code + wrapper_code
 
 
 class QiskitMainTransformer(ast.NodeTransformer):

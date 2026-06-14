@@ -457,6 +457,22 @@ def _safe_remove(path: Optional[str]) -> None:
 
 def _extract_run_error(result: subprocess.CompletedProcess) -> Tuple[str, str]:
     stderr = result.stderr or ""
+    
+    # Filter out coverage warnings and their source code printouts
+    clean_lines = []
+    lines = stderr.splitlines()
+    skip_next = False
+    for line in lines:
+        if skip_next:
+            skip_next = False
+            if line.startswith("  ") and ("self.warn" in line or "self._warn" in line):
+                continue
+        if "CoverageWarning" in line:
+            if ":" in line:
+                skip_next = True
+            continue
+        clean_lines.append(line)
+    stderr = "\n".join(clean_lines)
     full_error = stderr.strip()
 
     if result.returncode != 0:

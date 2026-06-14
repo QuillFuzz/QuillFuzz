@@ -658,7 +658,8 @@ def run_mutation_phase(model, files, args, common_run_dir, logfile_path, logger=
         print(f"Error: Mutation prompt file '{mutation_prompt_path}' not found. Skipping mutation phase.")
         return [], None, [], []
 
-    mutation_count = args.n_mutations if args.n_mutations > 0 else len(files)
+    n_mutations = getattr(args, "n_mutations", None)
+    mutation_count = n_mutations if (n_mutations is not None and n_mutations >= 0) else len(files)
     start_time = time.time()
     stats_list = []
     metrics_rows = []
